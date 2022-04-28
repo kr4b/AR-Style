@@ -73,7 +73,7 @@
 #if ARX_TARGET_PLATFORM_WINDOWS
 const char *vconf = "-module=WinMF -format=BGRA";
 #else
-const char *vconf = NULL;
+const char *vconf = "-module=V4L2 -width=1280 -height=720 -format=BGRA";
 #endif
 const char *cpara = NULL;
 
@@ -96,7 +96,7 @@ struct marker {
     float height;
 };
 static const struct marker markers[] = {
-    {"pinball.jpg", 1.0}
+    {"tracker.jpg", 1.0}
 };
 static const int markerCount = (sizeof(markers)/sizeof(markers[0]));
 

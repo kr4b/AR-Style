@@ -3,6 +3,7 @@ Examples/**/build*/
 Examples/*.apk
 Examples/*.app
 Examples/*.exe
+video/
 
 ### Packaging
 Source/packaging/linux/cpack/
@@ -35,6 +36,7 @@ ipch/
 *.opensdf
 *.sdf
 *.cachefile
+**/.cache/
 
 #### IDE user-config.
 # Android Studio

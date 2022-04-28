@@ -100,13 +100,21 @@ set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${DEVICE_FLAGS} -DGL_GLEXT_PROTOTYPES=1 -fPI
 set(RESOURCES
     ../hiro.patt
     ../kanji.patt
+    ../filter.frag
+    ../edge.frag
+    ../lab2rgb.frag
+    ../rgb2lab.frag
+    ../shaderES2.frag
+    ../monkey.mtl
+    ../monkey.obj
 )
 
 set(SOURCE
     ../main.cpp
+    ../OBJ_Loader.h
     ../draw.h
     ../draw.cpp
-    ${RESOURCES}
+    # ${RESOURCES}
     ${FRAMEWORKS}
 )
 

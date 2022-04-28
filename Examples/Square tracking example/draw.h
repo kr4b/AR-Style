@@ -44,7 +44,9 @@
 extern "C" {
 #endif
 
-void drawSetup(ARG_API drawAPI_in, bool rotate90_in, bool flipH_in, bool flipV_in);
+void drawInit();
+void drawSetup(ARG_API drawAPI_in, bool rotate90_in, bool flipH_in, bool flipV_in, int width, int height);
+void drawPrepare();
 int drawLoadModel(const char *path);
 void drawSetViewport(int32_t viewport[4]);
 void drawSetCamera(float projection[16], float view[16]);
