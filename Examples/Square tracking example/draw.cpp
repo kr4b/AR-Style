@@ -75,6 +75,7 @@
 // Indices of GL program uniforms.
 enum {
     UNIFORM_MODELVIEW_PROJECTION_MATRIX,
+    UNIFORM_DIFFUSE_COLOR,
     UNIFORM_WIDTH,
     UNIFORM_HEIGHT,
     UNIFORM_COUNT
@@ -82,7 +83,7 @@ enum {
 // Indices of of GL program attributes.
 enum {
     ATTRIBUTE_VERTEX,
-    ATTRIBUTE_COLOUR,
+    ATTRIBUTE_NORMAL,
     ATTRIBUTE_COUNT
 };
 static GLint uniforms[UNIFORM_COUNT] = {0};
@@ -90,11 +91,10 @@ static GLuint program = 0;
 static GLuint postPrograms[4] = {0};
 
 #if HAVE_GL3
-static GLuint gCubeVAOs[2] = {0};
-static GLuint gCubeV3BO = 0;
-static GLuint gCubeC4BO = 0;
-static GLuint gCubeCb4BO = 0;
-static GLuint gCubeEABO = 0;
+static GLuint gModelVAO = 0;
+static GLuint gModelV3BO = 0;
+static GLuint gModelN3BO = 0;
+static GLuint gModelIBO = 0;
 static GLuint gQuadVAO = 0;
 static GLuint gQuadVBOs[2] = {0};
 static GLuint gFBOs[2] = {0};
@@ -154,15 +154,27 @@ static bool gModelLoaded[DRAW_MODELS_MAX] = {false};
 static float gModelPoses[DRAW_MODELS_MAX][16];
 static bool gModelVisbilities[DRAW_MODELS_MAX];
 
+static objl::Mesh model;
+static std::vector<float> mVertices;
+static std::vector<float> mNormals;
+
 static void drawCube(float viewProjection[16], float pose[16]);
 static void drawPost();
 
 void drawInit() {
-    objl::Loader loader;
     const char *resourcesDir = arUtilGetResourcesDirectoryPath(
         AR_UTIL_RESOURCES_DIRECTORY_BEHAVIOR_BEST);
     const std::string path = std::string(resourcesDir) + "/monkey.obj";
+    objl::Loader loader;
     loader.LoadFile(path);
+    model = loader.LoadedMeshes[0];
+    mVertices.reserve(model.Vertices.size() * 3);
+    mNormals.reserve(model.Vertices.size() * 3);
+    for (int i = 0; i < model.Vertices.size(); i++) {
+        objl::Vertex vertex = model.Vertices[i];
+        mVertices.insert(mVertices.end(), {vertex.Position.X, vertex.Position.Y, vertex.Position.Z});
+        mNormals.insert(mNormals.end(), {vertex.Normal.X, vertex.Normal.Y, vertex.Normal.Z});
+    }
 }
 
 void drawSetup(ARG_API drawAPI_in, bool rotate90_in, bool flipH_in, bool flipV_in, int width, int height) {
@@ -274,13 +286,12 @@ void drawCleanup() {
         }
 #if HAVE_GL3
         if (drawAPI == ARG_API_GL3) {
-            if (gCubeVAOs[0]) {
-                glDeleteBuffers(1, &gCubeCb4BO);
-                glDeleteBuffers(1, &gCubeEABO);
-                glDeleteBuffers(1, &gCubeC4BO);
-                glDeleteBuffers(1, &gCubeV3BO);
-                glDeleteVertexArrays(2, gCubeVAOs);
-                gCubeVAOs[0] = gCubeVAOs[1] = 0;
+            if (gModelVAO) {
+                glDeleteBuffers(1, &gModelIBO);
+                glDeleteBuffers(1, &gModelN3BO);
+                glDeleteBuffers(1, &gModelV3BO);
+                glDeleteVertexArrays(1, &gModelVAO);
+                gModelVAO = 0;
             }
             if (gQuadVAO) {
                 glDeleteBuffers(2, gQuadVBOs);
@@ -363,42 +374,34 @@ void draw() {
             GLuint vertShader = 0, fragShader = 0;
             // A simple shader pair which accepts just a vertex position and colour, no lighting.
             const char vertShaderStringGLES2[] =
-                "attribute vec4 position;\n"
-                "attribute vec4 colour;\n"
+                "attribute vec3 position;\n"
+                "attribute vec3 normal;\n"
                 "uniform mat4 modelViewProjectionMatrix;\n"
-                "varying vec4 colourVarying;\n"
-                "void main()\n"
-                "{\n"
-                    "gl_Position = modelViewProjectionMatrix * position;\n"
-                    "colourVarying = colour;\n"
+                "void main() {\n"
+                    "gl_Position = modelViewProjectionMatrix * vec4(position, 1.0);\n"
                 "}\n";
             const char fragShaderStringGLES2[] =
                 "#ifdef GL_ES\n"
                 "precision mediump float;\n"
                 "#endif\n"
-                "varying vec4 colourVarying;\n"
-                "void main()\n"
-                "{\n"
-                    "gl_FragColor = colourVarying;\n"
+                "uniform vec3 diffuseColor;\n"
+                "void main() {\n"
+                    "gl_FragColor = vec4(diffuseColor, 1.0);\n"
                 "}\n";
             const char vertShaderStringGL3[] =
                 "#version 150\n"
-                "in vec4 position;\n"
-                "in vec4 colour;\n"
+                "in vec3 position;\n"
+                "in vec3 normal;\n"
                 "uniform mat4 modelViewProjectionMatrix;\n"
-                "out vec4 colourVarying;\n"
-                "void main()\n"
-                "{\n"
-                "gl_Position = modelViewProjectionMatrix * position;\n"
-                "colourVarying = colour;\n"
+                "void main() {\n"
+                    "gl_Position = modelViewProjectionMatrix * vec4(position, 1.0);\n"
                 "}\n";
             const char fragShaderStringGL3[] =
                 "#version 150\n"
-                "in vec4 colourVarying;\n"
                 "out vec4 FragColor;\n"
-                "void main()\n"
-                "{\n"
-                "FragColor = colourVarying;\n"
+                "uniform vec3 diffuseColor;\n"
+                "void main() {\n"
+                    "FragColor = vec4(diffuseColor, 1.0);\n"
                 "}\n";
 
             if (program) arglGLDestroyShaders(0, 0, program);
@@ -424,7 +427,7 @@ void draw() {
             glAttachShader(program, fragShader);
             
             glBindAttribLocation(program, ATTRIBUTE_VERTEX, "position");
-            glBindAttribLocation(program, ATTRIBUTE_COLOUR, "colour");
+            glBindAttribLocation(program, ATTRIBUTE_NORMAL, "colour");
             if (!arglGLLinkProgram(program)) {
                 ARLOGe("draw: Error linking shader program.\n");
                 arglGLDestroyShaders(vertShader, fragShader, program);
@@ -435,6 +438,7 @@ void draw() {
             
             // Retrieve linked uniform locations.
             uniforms[UNIFORM_MODELVIEW_PROJECTION_MATRIX] = glGetUniformLocation(program, "modelViewProjectionMatrix");
+            uniforms[UNIFORM_DIFFUSE_COLOR] = glGetUniformLocation(program, "diffuseColor");
         }
         glUseProgram(program);
         mtxLoadMatrixf(viewProjection, gProjection);
@@ -455,19 +459,6 @@ void draw() {
 
 // Something to look at, draw a rotating colour cube.
 static void drawCube(float viewProjection[16], float pose[16]) {
-    // Colour cube data.
-    const GLfloat cube_vertices [8][3] = {
-        /* +z */ {0.5f, 0.5f, 0.5f}, {0.5f, -0.5f, 0.5f}, {-0.5f, -0.5f, 0.5f}, {-0.5f, 0.5f, 0.5f},
-        /* -z */ {0.5f, 0.5f, -0.5f}, {0.5f, -0.5f, -0.5f}, {-0.5f, -0.5f, -0.5f}, {-0.5f, 0.5f, -0.5f} };
-    const GLubyte cube_vertex_colors [8][4] = {
-        {255, 255, 255, 255}, {255, 255, 0, 255}, {0, 255, 0, 255}, {0, 255, 255, 255},
-        {255, 0, 255, 255}, {255, 0, 0, 255}, {0, 0, 0, 255}, {0, 0, 255, 255} };
-    const GLubyte cube_vertex_colors_black [8][4] = {
-        {0, 0, 0, 255}, {0, 0, 0, 255}, {0, 0, 0, 255}, {0, 0, 0, 255},
-        {0, 0, 0, 255}, {0, 0, 0, 255}, {0, 0, 0, 255}, {0, 0, 0, 255} };
-    const GLushort cube_faces [6][4] = { /* ccw-winding */
-        /* +z */ {3, 2, 1, 0}, /* -y */ {2, 3, 7, 6}, /* +y */ {0, 1, 5, 4},
-        /* -x */ {3, 0, 4, 7}, /* +x */ {1, 2, 6, 5}, /* -z */ {4, 5, 6, 7} };
     int i;
 #if HAVE_GLES2 || HAVE_GL3
     float modelViewProjection[16];
@@ -478,21 +469,17 @@ static void drawCube(float viewProjection[16], float pose[16]) {
         glPushMatrix(); // Save world coordinate system.
         glMultMatrixf(pose);
         glScalef(40.0f, 40.0f, 40.0f);
-        glTranslatef(0.0f, 0.0f, 0.5f); // Place base of cube on marker surface.
-        glDisable(GL_LIGHTING);
+        glRotatef(90.0f, 1.0f, 0.0f, 0.0f);
+        glTranslatef(0.0f, 1.0f, 0.0f);
         glDisable(GL_TEXTURE_2D);
         glDisable(GL_BLEND);
-        glColorPointer(4, GL_UNSIGNED_BYTE, 0, cube_vertex_colors);
-        glVertexPointer(3, GL_FLOAT, 0, cube_vertices);
+        glVertexPointer(3, GL_FLOAT, 0, mVertices.data());
+        glNormalPointer(GL_FLOAT, 0, mNormals.data());
         glEnableClientState(GL_VERTEX_ARRAY);
-        glEnableClientState(GL_COLOR_ARRAY);
-        for (i = 0; i < 6; i++) {
-            glDrawElements(GL_TRIANGLE_FAN, 4, GL_UNSIGNED_SHORT, &(cube_faces[i][0]));
-        }
-        glDisableClientState(GL_COLOR_ARRAY);
-        glColor4ub(0, 0, 0, 255);
-        for (i = 0; i < 6; i++) {
-            glDrawElements(GL_LINE_LOOP, 4, GL_UNSIGNED_SHORT, &(cube_faces[i][0]));
+        glEnableClientState(GL_NORMAL_ARRAY);
+        glColor3f(model.MeshMaterial.Kd.X, model.MeshMaterial.Kd.Y, model.MeshMaterial.Kd.Z);
+        for (i = 0; i < model.Indices.size() / 3; i++) {
+            glDrawElements(GL_TRIANGLES, 3, GL_UNSIGNED_SHORT, &model.Indices[i * 3]);
         }
         glPopMatrix();    // Restore world coordinate system.
     }
@@ -503,73 +490,54 @@ static void drawCube(float viewProjection[16], float pose[16]) {
         mtxLoadMatrixf(modelViewProjection, viewProjection);
         mtxMultMatrixf(modelViewProjection, pose);
         mtxScalef(modelViewProjection, 40.0f, 40.0f, 40.0f);
-        mtxTranslatef(modelViewProjection, 0.0f, 0.0f, 0.5f); // Place base of cube on marker surface.
+        mtxRotatef(modelViewProjection, 90.0f, 1.0f, 0.0f, 0.0f);
+        mtxTranslatef(modelViewProjection, 0.0f, 1.0f, 0.0f);
         glUniformMatrix4fv(uniforms[UNIFORM_MODELVIEW_PROJECTION_MATRIX], 1, GL_FALSE, modelViewProjection);
+        glUniform3f(uniforms[UNIFORM_DIFFUSE_COLOR], model.MeshMaterial.Kd.X, model.MeshMaterial.Kd.Y, model.MeshMaterial.Kd.Z);
 #  if HAVE_GLES2
         if (drawAPI == ARG_API_GLES2) {
-            glVertexAttribPointer(ATTRIBUTE_VERTEX, 3, GL_FLOAT, GL_FALSE, 0, cube_vertices);
+            glVertexAttribPointer(ATTRIBUTE_VERTEX, 3, GL_FLOAT, GL_FALSE, 0, mVertices.data());
             glEnableVertexAttribArray(ATTRIBUTE_VERTEX);
-            glVertexAttribPointer(ATTRIBUTE_COLOUR, 4, GL_UNSIGNED_BYTE, GL_TRUE, 0, cube_vertex_colors);
-            glEnableVertexAttribArray(ATTRIBUTE_COLOUR);
+            glVertexAttribPointer(ATTRIBUTE_NORMAL, 3, GL_FLOAT, GL_FALSE, 0, mNormals.data());
+            glEnableVertexAttribArray(ATTRIBUTE_NORMAL);
 #    ifdef DEBUG
             if (!arglGLValidateProgram(program)) {
                 ARLOGe("drawCube(): Error: shader program %d validation failed.\n", program);
                 return;
             }
 #    endif // DEBUG
-            for (i = 0; i < 6; i++) {
-                glDrawElements(GL_TRIANGLE_FAN, 4, GL_UNSIGNED_SHORT, &(cube_faces[i][0]));
-            }
-            glVertexAttribPointer(ATTRIBUTE_COLOUR, 4, GL_UNSIGNED_BYTE, GL_TRUE, 0, cube_vertex_colors_black);
-            glEnableVertexAttribArray(ATTRIBUTE_COLOUR);
-            for (i = 0; i < 6; i++) {
-                glDrawElements(GL_LINE_LOOP, 4, GL_UNSIGNED_SHORT, &(cube_faces[i][0]));
+            for (i = 0; i < model.Indices.size() / 3; i++) {
+                glDrawElements(GL_TRIANGLES, 3, GL_UNSIGNED_SHORT, &model.Indices[i * 3]);
             }
         }
 #  else // HAVE_GL3
         if (drawAPI == ARG_API_GL3) {
-            if (!gCubeVAOs[0]) {
-                glGenVertexArrays(2, gCubeVAOs);
-                glBindVertexArray(gCubeVAOs[0]);
-                glGenBuffers(1, &gCubeV3BO);
-                glBindBuffer(GL_ARRAY_BUFFER, gCubeV3BO);
-                glBufferData(GL_ARRAY_BUFFER, sizeof(cube_vertices), cube_vertices, GL_STATIC_DRAW);
+            if (!gModelVAO) {
+                glGenVertexArrays(1, &gModelVAO);
+                glBindVertexArray(gModelVAO);
+                glGenBuffers(1, &gModelV3BO);
+                glBindBuffer(GL_ARRAY_BUFFER, gModelV3BO);
+                glBufferData(GL_ARRAY_BUFFER, sizeof(objl::Vector3) * mVertices.size(), mVertices.data(), GL_STATIC_DRAW);
                 glVertexAttribPointer(ATTRIBUTE_VERTEX, 3, GL_FLOAT, GL_FALSE, 0, NULL);
                 glEnableVertexAttribArray(ATTRIBUTE_VERTEX);
-                glGenBuffers(1, &gCubeC4BO);
-                glBindBuffer(GL_ARRAY_BUFFER, gCubeC4BO);
-                glBufferData(GL_ARRAY_BUFFER, sizeof(cube_vertex_colors), cube_vertex_colors, GL_STATIC_DRAW);
-                glVertexAttribPointer(ATTRIBUTE_COLOUR, 4, GL_UNSIGNED_BYTE, GL_TRUE, 0, NULL);
-                glEnableVertexAttribArray(ATTRIBUTE_COLOUR);
-                glGenBuffers(1, &gCubeEABO);
-                glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, gCubeEABO);
-                glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(cube_faces), cube_faces, GL_STATIC_DRAW);
-                glBindVertexArray(gCubeVAOs[1]);
-                glBindBuffer(GL_ARRAY_BUFFER, gCubeV3BO);
-                glVertexAttribPointer(ATTRIBUTE_VERTEX, 3, GL_FLOAT, GL_FALSE, 0, NULL);
-                glEnableVertexAttribArray(ATTRIBUTE_VERTEX);
-                glGenBuffers(1, &gCubeCb4BO);
-                glBindBuffer(GL_ARRAY_BUFFER, gCubeCb4BO);
-                glBufferData(GL_ARRAY_BUFFER, sizeof(cube_vertex_colors_black), cube_vertex_colors_black, GL_STATIC_DRAW);
-                glVertexAttribPointer(ATTRIBUTE_COLOUR, 4, GL_UNSIGNED_BYTE, GL_TRUE, 0, NULL);
-                glEnableVertexAttribArray(ATTRIBUTE_COLOUR);
-                glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, gCubeEABO);
+                glGenBuffers(1, &gModelN3BO);
+                glBindBuffer(GL_ARRAY_BUFFER, gModelN3BO);
+                glBufferData(GL_ARRAY_BUFFER, sizeof(objl::Vector3) * mNormals.size(), mNormals.data(), GL_STATIC_DRAW);
+                glVertexAttribPointer(ATTRIBUTE_NORMAL, 3, GL_FLOAT, GL_FALSE, 0, NULL);
+                glEnableVertexAttribArray(ATTRIBUTE_NORMAL);
+                glGenBuffers(1, &gModelIBO);
+                glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, gModelIBO);
+                glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(unsigned int) * model.Indices.size(), model.Indices.data(), GL_STATIC_DRAW);
             }
             
-            glBindVertexArray(gCubeVAOs[0]);
+            glBindVertexArray(gModelVAO);
     #ifdef DEBUG
             if (!arglGLValidateProgram(program)) {
                 ARLOGe("drawCube() Error: shader program %d validation failed.\n", program);
                 return;
             }
     #endif
-            for (i = 0; i < 6; i++) {
-                glDrawElements(GL_TRIANGLE_FAN, 4, GL_UNSIGNED_SHORT, (void *)(i*4*sizeof(GLushort)));
-            }
-            glBindVertexArray(gCubeVAOs[1]);
-            for (i = 0; i < 6; i++) {
-                glDrawElements(GL_LINE_LOOP, 4, GL_UNSIGNED_SHORT, (void *)(i*4*sizeof(GLushort)));
-            }
+            glDrawArrays(GL_TRIANGLES, 0, model.Indices.size());
             glBindVertexArray(0);
         }
 #  endif // HAVE_GL3
@@ -629,7 +597,7 @@ static GLuint loadShaderProgram(const std::string fragPathGL3, const std::string
     glAttachShader(program, fragShader);
 
     glBindAttribLocation(program, ATTRIBUTE_VERTEX, "position");
-    glBindAttribLocation(program, ATTRIBUTE_COLOUR, "texCoord");
+    glBindAttribLocation(program, ATTRIBUTE_NORMAL, "texCoord");
     if (!arglGLLinkProgram(program)) {
         ARLOGe("drawPost: Error linking shader program.\n");
         arglGLDestroyShaders(vertShader, fragShader, program);
@@ -672,9 +640,9 @@ static void drawPost() {
 #  if HAVE_GLES2
         if (drawAPI == ARG_API_GLES2) {
             glVertexAttribPointer(ATTRIBUTE_VERTEX, 2, GL_FLOAT, GL_FALSE, 0, vertices);
-            glVertexAttribPointer(ATTRIBUTE_COLOUR, 2, GL_FLOAT, GL_FALSE, 0, texCoords);
+            glVertexAttribPointer(ATTRIBUTE_NORMAL, 2, GL_FLOAT, GL_FALSE, 0, texCoords);
             glEnableVertexAttribArray(ATTRIBUTE_VERTEX);
-            glEnableVertexAttribArray(ATTRIBUTE_COLOUR);
+            glEnableVertexAttribArray(ATTRIBUTE_NORMAL);
 #    ifdef DEBUG
             if (!arglGLValidateProgram(postProgram)) {
                 ARLOGe("drawPost(): Error: shader program %d validation failed.\n", postProgram);
@@ -694,8 +662,8 @@ static void drawPost() {
                 glEnableVertexAttribArray(ATTRIBUTE_VERTEX);
                 glBindBuffer(GL_ARRAY_BUFFER, gQuadVBOs[1]);
                 glBufferData(GL_ARRAY_BUFFER, sizeof(texCoords), texCoords, GL_STATIC_DRAW);
-                glVertexAttribPointer(ATTRIBUTE_COLOUR, 2, GL_FLOAT, GL_FALSE, 0, NULL);
-                glEnableVertexAttribArray(ATTRIBUTE_COLOUR);
+                glVertexAttribPointer(ATTRIBUTE_NORMAL, 2, GL_FLOAT, GL_FALSE, 0, NULL);
+                glEnableVertexAttribArray(ATTRIBUTE_NORMAL);
             }
 
             glBindVertexArray(gQuadVAO);
