@@ -97,9 +97,11 @@ static GLuint gModelN3BO = 0;
 static GLuint gModelIBO = 0;
 static GLuint gQuadVAO = 0;
 static GLuint gQuadVBOs[2] = {0};
+
 static GLuint gFBOs[2] = {0};
 static GLuint gFBOTextures[2] = {0};
 static GLuint gRBOs[2] = {0};
+
 	#if defined(_WIN32)
 	# define ARGL_GET_PROC_ADDRESS wglGetProcAddress
 	PFNGLBINDBUFFERPROC glBindBuffer = NULL; // (PFNGLGENBUFFERSPROC)ARGL_GET_PROC_ADDRESS("glGenBuffersARB");
@@ -159,12 +161,12 @@ static std::vector<float> mVertices;
 static std::vector<float> mNormals;
 
 static void drawCube(float viewProjection[16], float pose[16]);
-static void drawPost();
+static void drawPost(size_t index);
 
 void drawInit() {
     const char *resourcesDir = arUtilGetResourcesDirectoryPath(
         AR_UTIL_RESOURCES_DIRECTORY_BEHAVIOR_BEST);
-    const std::string path = std::string(resourcesDir) + "/monkey.obj";
+    const std::string path = std::string(resourcesDir) + "/shrek.obj";
     objl::Loader loader;
     loader.LoadFile(path);
     model = loader.LoadedMeshes[0];
@@ -234,38 +236,32 @@ void drawSetup(ARG_API drawAPI_in, bool rotate90_in, bool flipH_in, bool flipV_i
     flipV = flipV_in;
 
 #if HAVE_GLES2 || HAVE_GL3
+    glActiveTexture(GL_TEXTURE0);
     // Create framebuffers
     glGenFramebuffers(2, gFBOs);
 
     // Create framebuffer textures
-    glActiveTexture(GL_TEXTURE0);
     glGenTextures(2, gFBOTextures);
-    glBindTexture(GL_TEXTURE_2D, gFBOTextures[0]);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glBindTexture(GL_TEXTURE_2D, gFBOTextures[1]);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glBindTexture(GL_TEXTURE_2D, 0);
 
     // Create render buffers
     glGenRenderbuffers(2, gRBOs);
-    glBindRenderbuffer(GL_RENDERBUFFER, gRBOs[0]);
-    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, width, height);
-    glBindRenderbuffer(GL_RENDERBUFFER, gRBOs[1]);
-    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, width, height);
+
+    for (int j = 0; j <= 1; j++) {
+        glBindTexture(GL_TEXTURE_2D, gFBOTextures[j]);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+        glBindRenderbuffer(GL_RENDERBUFFER, gRBOs[j]);
+        glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, width, height);
+
+        glBindFramebuffer(GL_FRAMEBUFFER, gFBOs[j]);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, gFBOTextures[j], 0);
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, gRBOs[j]);
+    }
+
+    glBindTexture(GL_TEXTURE_2D, 0);
     glBindRenderbuffer(GL_RENDERBUFFER, 0);
-
-    glBindFramebuffer(GL_FRAMEBUFFER, gFBOs[0]);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, gFBOTextures[0], 0);
-    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, gRBOs[0]);
-
-    glBindFramebuffer(GL_FRAMEBUFFER, gFBOs[1]);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, gFBOTextures[1], 0);
-    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, gRBOs[1]);
-
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 #endif
 
@@ -274,7 +270,7 @@ void drawSetup(ARG_API drawAPI_in, bool rotate90_in, bool flipH_in, bool flipV_i
 
 void drawPrepare() {
     glBindFramebuffer(GL_FRAMEBUFFER, gFBOs[0]);
-    glViewport(0, 0, gViewport[2], gViewport[3]);
+    glViewport(0, 0, gViewport[2] / 2, gViewport[3]);
 }
 
 void drawCleanup() {
@@ -354,10 +350,9 @@ void drawSetModel(int modelIndex, bool visible, float pose[16]) {
     if (visible) mtxLoadMatrixf(&(gModelPoses[modelIndex][0]), pose);
 }
 
-void draw() {
+void draw(size_t index) {
     float viewProjection[16];
-    // glViewport(gViewport[0], gViewport[1], gViewport[2], gViewport[3]);
-    glViewport(0, 0, gViewport[2], gViewport[3]);
+    glViewport(0, 0, gViewport[2] / 2, gViewport[3]);
 
 #if HAVE_GL
     if (drawAPI == ARG_API_GL) {
@@ -375,9 +370,11 @@ void draw() {
             // A simple shader pair which accepts just a vertex position and colour, no lighting.
             const char vertShaderStringGLES2[] =
                 "attribute vec3 position;\n"
-                "attribute vec3 normal;\n"
+                "attribute vec3 vNormal;\n"
                 "uniform mat4 modelViewProjectionMatrix;\n"
+                "out vec3 normal;\n"
                 "void main() {\n"
+                    "normal = vNormal;\n"
                     "gl_Position = modelViewProjectionMatrix * vec4(position, 1.0);\n"
                 "}\n";
             const char fragShaderStringGLES2[] =
@@ -385,23 +382,29 @@ void draw() {
                 "precision mediump float;\n"
                 "#endif\n"
                 "uniform vec3 diffuseColor;\n"
+                "in vec3 normal;\n"
                 "void main() {\n"
-                    "gl_FragColor = vec4(diffuseColor, 1.0);\n"
+                    "float intensity = dot(normalize(vec3(5.0, 10.0, 1.0)), normal);\n"
+                    "gl_FragColor = vec4(intensity * diffuseColor, 1.0);\n"
                 "}\n";
             const char vertShaderStringGL3[] =
                 "#version 150\n"
                 "in vec3 position;\n"
-                "in vec3 normal;\n"
+                "in vec3 vNormal;\n"
                 "uniform mat4 modelViewProjectionMatrix;\n"
+                "out vec3 normal;\n"
                 "void main() {\n"
                     "gl_Position = modelViewProjectionMatrix * vec4(position, 1.0);\n"
+                    "normal = vNormal;\n"
                 "}\n";
             const char fragShaderStringGL3[] =
                 "#version 150\n"
                 "out vec4 FragColor;\n"
                 "uniform vec3 diffuseColor;\n"
+                "in vec3 normal;\n"
                 "void main() {\n"
-                    "FragColor = vec4(diffuseColor, 1.0);\n"
+                    "float intensity = dot(normalize(vec3(5.0, 10.0, 1.0)), normal);\n"
+                    "FragColor = vec4(intensity * diffuseColor, 1.0);\n"
                 "}\n";
 
             if (program) arglGLDestroyShaders(0, 0, program);
@@ -454,7 +457,7 @@ void draw() {
         }
     }
 
-    drawPost();
+    drawPost(index);
 }
 
 // Something to look at, draw a rotating colour cube.
@@ -470,7 +473,7 @@ static void drawCube(float viewProjection[16], float pose[16]) {
         glMultMatrixf(pose);
         glScalef(40.0f, 40.0f, 40.0f);
         glRotatef(90.0f, 1.0f, 0.0f, 0.0f);
-        glTranslatef(0.0f, 1.0f, 0.0f);
+        glTranslatef(0.0f, 1.25f, 0.0f);
         glDisable(GL_TEXTURE_2D);
         glDisable(GL_BLEND);
         glVertexPointer(3, GL_FLOAT, 0, mVertices.data());
@@ -491,7 +494,7 @@ static void drawCube(float viewProjection[16], float pose[16]) {
         mtxMultMatrixf(modelViewProjection, pose);
         mtxScalef(modelViewProjection, 40.0f, 40.0f, 40.0f);
         mtxRotatef(modelViewProjection, 90.0f, 1.0f, 0.0f, 0.0f);
-        mtxTranslatef(modelViewProjection, 0.0f, 1.0f, 0.0f);
+        mtxTranslatef(modelViewProjection, 0.0f, 1.25f, 0.0f);
         glUniformMatrix4fv(uniforms[UNIFORM_MODELVIEW_PROJECTION_MATRIX], 1, GL_FALSE, modelViewProjection);
         glUniform3f(uniforms[UNIFORM_DIFFUSE_COLOR], model.MeshMaterial.Kd.X, model.MeshMaterial.Kd.Y, model.MeshMaterial.Kd.Z);
 #  if HAVE_GLES2
@@ -569,18 +572,18 @@ static GLuint loadShaderProgram(const std::string fragPathGL3, const std::string
     if (program) arglGLDestroyShaders(0, 0, program);
     program = glCreateProgram();
     if (!program) {
-        ARLOGe("drawPost: Error creating shader program.\n");
+        ARLOGe("loadShaderProgram: Error creating shader program.\n");
         return 0;
     }
 
     if (!arglGLCompileShaderFromString(&vertShader, GL_VERTEX_SHADER, drawAPI == ARG_API_GLES2 ? vertShaderStringGLES2 : vertShaderStringGL3)) {
-        ARLOGe("drawPost: Error compiling vertex shader.\n");
+        ARLOGe("loadShaderProgram: Error compiling vertex shader.\n");
         arglGLDestroyShaders(vertShader, fragShader, program);
         program = 0;
         return 0;
     }
     if (!arglGLCompileShaderFromFile(&fragShader, GL_FRAGMENT_SHADER, drawAPI == ARG_API_GLES2 ? fragPathGLES2.c_str() : fragPathGL3.c_str())) {
-        ARLOGe("drawPost: Error compiling fragment shader.\n");
+        ARLOGe("loadShaderProgram: Error compiling fragment shader.\n");
         GLint maxLength = 0;
         glGetShaderiv(fragShader, GL_INFO_LOG_LENGTH, &maxLength);
 
@@ -599,7 +602,7 @@ static GLuint loadShaderProgram(const std::string fragPathGL3, const std::string
     glBindAttribLocation(program, ATTRIBUTE_VERTEX, "position");
     glBindAttribLocation(program, ATTRIBUTE_NORMAL, "texCoord");
     if (!arglGLLinkProgram(program)) {
-        ARLOGe("drawPost: Error linking shader program.\n");
+        ARLOGe("loadShaderProgram: Error linking shader program.\n");
         arglGLDestroyShaders(vertShader, fragShader, program);
         program = 0;
         return 0;
@@ -609,7 +612,7 @@ static GLuint loadShaderProgram(const std::string fragPathGL3, const std::string
     return program;
 }
 
-static void drawPost() {
+static void drawPost(size_t index) {
     const GLfloat vertices [6][2] = {
         {-1.0f, -1.0f}, {1.0f, 1.0f}, {-1.0f, 1.0f},
         {-1.0f, -1.0f}, {1.0f, -1.0f}, {1.0f, 1.0f} };
@@ -676,7 +679,7 @@ static void drawPost() {
         }
 #  endif
     glDisable(GL_DEPTH_TEST);
-    glViewport(0, 0, gViewport[2], gViewport[3]);
+    glViewport(0, 0, gViewport[2] / 2, gViewport[3]);
 
     // RGB to LAB
     glUseProgram(postPrograms[0]);
@@ -687,33 +690,32 @@ static void drawPost() {
     glDrawArrays(GL_TRIANGLES, 0, 6);
 
     // Bilinear filter
-    glUseProgram(postPrograms[1]);
-    glBindFramebuffer(GL_FRAMEBUFFER, gFBOs[0]);
-    glClear(GL_COLOR_BUFFER_BIT);
-    glBindTexture(GL_TEXTURE_2D, gFBOTextures[1]);
+    // glUseProgram(postPrograms[1]);
+    // glBindFramebuffer(GL_FRAMEBUFFER, gFBOs[0]);
+    // glClear(GL_COLOR_BUFFER_BIT);
+    // glBindTexture(GL_TEXTURE_2D, gFBOTextures[1]);
 
-    glUniform1f(uniforms[UNIFORM_WIDTH], float(gViewport[2]));
-    glUniform1f(uniforms[UNIFORM_HEIGHT], float(gViewport[3]));
+    // glUniform1f(uniforms[UNIFORM_WIDTH], float(gViewport[2] / 2));
+    // glUniform1f(uniforms[UNIFORM_HEIGHT], float(gViewport[3]));
 
-    glDrawArrays(GL_TRIANGLES, 0, 6);
+    // glDrawArrays(GL_TRIANGLES, 0, 6);
 
-    // Edge detection
-    glUseProgram(postPrograms[2]);
-    glBindFramebuffer(GL_FRAMEBUFFER, gFBOs[1]);
-    glClear(GL_COLOR_BUFFER_BIT);
-    glBindTexture(GL_TEXTURE_2D, gFBOTextures[0]);
+    // // Edge detection
+    // glUseProgram(postPrograms[2]);
+    // glBindFramebuffer(GL_FRAMEBUFFER, gFBOs[1]);
+    // glClear(GL_COLOR_BUFFER_BIT);
+    // glBindTexture(GL_TEXTURE_2D, gFBOTextures[0]);
 
-    glUniform1f(uniforms[UNIFORM_WIDTH], float(gViewport[2]));
-    glUniform1f(uniforms[UNIFORM_HEIGHT], float(gViewport[3]));
+    // glUniform1f(uniforms[UNIFORM_WIDTH], float(gViewport[2] / 2));
+    // glUniform1f(uniforms[UNIFORM_HEIGHT], float(gViewport[3]));
 
-    glDrawArrays(GL_TRIANGLES, 0, 6);
+    // glDrawArrays(GL_TRIANGLES, 0, 6);
 
     // LAB to RGB
-    glViewport(gViewport[0], gViewport[1], gViewport[2], gViewport[3]);
+    glViewport(gViewport[0] + gViewport[2] / 2 * index, gViewport[1], gViewport[2] / 2, gViewport[3]);
 
     glUseProgram(postPrograms[3]);
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    glClear(GL_COLOR_BUFFER_BIT);
     glBindTexture(GL_TEXTURE_2D, gFBOTextures[1]);
 
     glDrawArrays(GL_TRIANGLES, 0, 6);

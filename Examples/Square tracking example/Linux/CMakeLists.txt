@@ -105,8 +105,8 @@ set(RESOURCES
     ../lab2rgb.frag
     ../rgb2lab.frag
     ../shaderES2.frag
-    ../monkey.mtl
-    ../monkey.obj
+    ../shrek.mtl
+    ../shrek.obj
 )
 
 set(SOURCE

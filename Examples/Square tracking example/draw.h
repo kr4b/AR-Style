@@ -51,7 +51,7 @@ int drawLoadModel(const char *path);
 void drawSetViewport(int32_t viewport[4]);
 void drawSetCamera(float projection[16], float view[16]);
 void drawSetModel(int modelIndex, bool visible, float pose[16]);
-void draw(void);
+void draw(size_t index);
 void drawCleanup();
 
 #ifdef __cplusplus

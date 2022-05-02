@@ -43,5 +43,5 @@ void main() {
     }
     vec3 p = texture(frame, vTexCoord).xyz;
     // fragColor = vec4(c, 0.0, 0.0, 1.0);
-    fragColor = vec4(p.x * c, p.y, p.z, 1.0);
+    fragColor = vec4(p.x * c, (p.y - 0.5) * c + 0.5, (p.z - 0.5) * c + 0.5, 1.0);
 }

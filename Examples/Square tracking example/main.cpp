@@ -71,14 +71,16 @@
 #include "draw.h"
 
 #if ARX_TARGET_PLATFORM_WINDOWS
-const char *vconf = "-module=WinMF -format=BGRA";
+const char *vconfl = "-module=WinMF -format=BGRA";
+const char *vconfr = "-module=WinMF -format=BGRA";
 #else
-// const char *vconf = "-module=GStreamer filesrc location=/home/max/test.mp4 !
-// "
+// const char *vconf = "-module=GStreamer filesrc location=/home/max/test.mp4 !"
 //                     "decodebin ! videoconvert ! video/x-raw ! identity "
 //                     "name=artoolkit ! fakesink";
-const char *vconf =
-    "-module=V4L2 -width=1280 -height=720 -dev=/dev/video4 -format=BGRA";
+// const char *vconf =
+//     "-module=V4L2 -width=1280 -height=720 -dev=/dev/video4 -format=BGRA";
+const char *vconfl = NULL;
+const char *vconfr = NULL;
 #endif
 const char *cpara = NULL;
 
@@ -168,7 +170,8 @@ int main(int argc, char *argv[]) {
       drawAPI = ARG_API_GL;
       ARLOGi("Created OpenGL 1.5+ context.\n");
 #if ARX_TARGET_PLATFORM_MACOS
-      vconf = "-format=BGRA";
+      vconfl = "-format=BGRA";
+      vconfr = "-format=BGRA";
 #endif
     } else {
       ARLOGi(
@@ -239,10 +242,36 @@ int main(int argc, char *argv[]) {
       AR_LABELING_THRESH_MODE_AUTO_BRACKETING);
 
 #ifdef DEBUG
-  ARLOGd("vconf is '%s'.\n", vconf);
+  ARLOGd("vconfl is '%s'.\n", vconfl);
+  ARLOGd("vconfr is '%s'.\n", vconfr);
 #endif
+  // Stereo projection matrix
+  // const double stereoParametersRaw[12] = {
+  //   0.99961674, -0.02704036, -0.00593392,  0.36404321,
+  //   -0.01923079, -0.52406532, -0.85146105, -0.03396377,
+  //   0.01991405,  0.85124886, -0.52438444,  0.34131616
+  // };
+  const double stereoParametersRaw[12] = {
+    1.0, 0.0, 0.0, 0.095,
+    0.0, 1.0, 0.0, 0.095,
+    0.0, 0.0, 1.0, 0.095
+  };
+  // const double stereoParametersRaw[12] = {
+  //   1.0, 0.0, 0.0, 0.0,
+  //   0.0, 1.0, 0.0, 0.0,
+  //   0.0, 0.0, 1.0, 0.0,
+  // };
+  char stereoParameters[sizeof(stereoParametersRaw)];
+  for (int i = 0; i < 12; i++) {
+    for (int j = 0; j < sizeof(double); j++) {
+      stereoParameters[i * sizeof(double) + sizeof(double) - j - 1] = ((char*) &stereoParametersRaw[i])[j];
+    }
+  }
+
   // Start tracking.
-  arController->startRunning(vconf, cpara, NULL, 0);
+  arController->startRunningStereo(vconfl, cpara, NULL, 0, vconfr, cpara, NULL, 0, NULL, (const char*) stereoParameters, sizeof(stereoParameters));
+  // arController->startRunning(vconfl, cpara, NULL, 0);
+
   drawInit();
 
   // Main loop.
@@ -271,7 +300,6 @@ int main(int argc, char *argv[]) {
               !arController->getSquareTracker()->debugMode());
         }
         if (ev.key.keysym.sym == SDLK_p) {
-          printf("PLAY\n");
           arVideoCapStart();
         }
       }
@@ -291,37 +319,51 @@ int main(int argc, char *argv[]) {
 
       if (contextWasUpdated) {
 
-        if (!arController->drawVideoInit(0)) {
-          ARLOGe("Error in ARController::drawVideoInit().\n");
-          quit(-1);
+        for (int i = 0; i <= 1; i++) {
+          if (!arController->drawVideoInit(i)) {
+            ARLOGe("Error in ARController::drawVideoInit(%d).\n", i);
+            quit(-1);
+          }
         }
-        // Initialize correct viewport
-        if (!arController->drawVideoSettings(
-                0, contextWidth, contextHeight, false, false, false,
-                ARVideoView::HorizontalAlignment::H_ALIGN_CENTRE,
-                ARVideoView::VerticalAlignment::V_ALIGN_CENTRE,
-                ARVideoView::ScalingMode::SCALE_MODE_FIT, viewport)) {
-          ARLOGe("Error in ARController::drawVideoSettings().\n");
-          quit(-1);
-        }
-        // Set framebuffer viewport
-        if (!arController->drawVideoSettings(
-                0, viewport[2], viewport[3], false, false, false,
-                ARVideoView::HorizontalAlignment::H_ALIGN_CENTRE,
-                ARVideoView::VerticalAlignment::V_ALIGN_CENTRE,
-                ARVideoView::ScalingMode::SCALE_MODE_FIT, NULL)) {
-          ARLOGe("Error in ARController::drawVideoSettings().\n");
+
+        int width, height;
+
+        if (!arController->videoParameters(
+              0, &width, &height, NULL)) {
+          ARLOGe("Error in ARController::videoParameters().\n");
           quit(-1);
         }
 
-        drawSetup(drawAPI, false, false, false, viewport[2], viewport[3]);
+        const float contentAspectRatio = float(width * 2) / float(height);
+        const float contextAspectRatio = float(contextWidth) / float(contextHeight);
+        int contentWidth, contentHeight;
+        if (contextAspectRatio < contentAspectRatio) {
+          contentWidth = contextWidth;
+          contentHeight = contentWidth / contentAspectRatio;
+        } else {
+          contentHeight = contextHeight;
+          contentWidth = contentHeight * contentAspectRatio;
+        }
 
+        viewport[0] = (contextWidth - contentWidth) / 2;
+        viewport[1] = (contextHeight - contentHeight) / 2;
+        viewport[2] = contentWidth;
+        viewport[3] = contentHeight;
+
+        for (int i = 0; i <= 1; i++) {
+          // Set framebuffer viewport
+          if (!arController->drawVideoSettings(
+                  i, contentWidth / 2, contentHeight, false, false, false,
+                  ARVideoView::HorizontalAlignment::H_ALIGN_CENTRE,
+                  ARVideoView::VerticalAlignment::V_ALIGN_CENTRE,
+                  ARVideoView::ScalingMode::SCALE_MODE_FIT, NULL)) {
+            ARLOGe("Error in ARController::drawVideoSettings(%d).\n", i);
+            quit(-1);
+          }
+        }
+
+        drawSetup(drawAPI, false, false, false, contentWidth / 2, contentHeight);
         drawSetViewport(viewport);
-        ARdouble projectionARD[16];
-        arController->projectionMatrix(0, 10.0f, 10000.0f, projectionARD);
-        for (int i = 0; i < 16; i++)
-          projection[i] = (float)projectionARD[i];
-        drawSetCamera(projection, NULL);
 
         for (int i = 0; i < markerCount; i++) {
           markerModelIDs[i] = drawLoadModel(NULL);
@@ -329,32 +371,43 @@ int main(int argc, char *argv[]) {
         contextWasUpdated = false;
       }
 
-      drawPrepare();
-
-      SDL_GL_MakeCurrent(gSDLWindow, gSDLContext);
-
-      // Clear the context.
-      glClearColor(0.0, 0.0, 0.0, 1.0);
-      glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
-      // Display the current video frame to the current OpenGL context.
-      arController->drawVideo(0);
-
       // Look for trackables, and draw on each found one.
-      for (int i = 0; i < markerCount; i++) {
-
+      for (int j = 0; j < markerCount; j++) {
         // Find the trackable for the given trackable ID.
-        ARTrackable *marker = arController->findTrackable(markerIDs[i]);
+        ARTrackable *marker = arController->findTrackable(markerIDs[j]);
         float view[16];
         if (marker->visible) {
           // arUtilPrintMtx16(marker->transformationMatrix);
-          for (int i = 0; i < 16; i++)
-            view[i] = (float)marker->transformationMatrix[i];
+          for (int k = 0; k < 16; k++) {
+            view[k] = (float)marker->transformationMatrix[k];
+          }
         }
-        drawSetModel(markerModelIDs[i], marker->visible, view);
+        drawSetModel(markerModelIDs[j], marker->visible, view);
       }
 
-      draw();
+      SDL_GL_MakeCurrent(gSDLWindow, gSDLContext);
+      glClear(GL_COLOR_BUFFER_BIT);
+
+      for (int i = 0; i <= 1; i++) {
+        drawPrepare();
+
+        ARdouble projectionARD[16];
+        arController->projectionMatrix(i, 10.0f, 10000.0f, projectionARD);
+        for (int i = 0; i < 16; i++) {
+          projection[i] = (float)projectionARD[i];
+        }
+
+        drawSetCamera(projection, NULL);
+
+        // Clear the context.
+        glClearColor(0.0, 0.0, 0.0, 1.0);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+        // Display the current video frame to the current OpenGL context.
+        arController->drawVideo(i);
+
+        draw(i);
+      }
 
       SDL_GL_SwapWindow(gSDLWindow);
     } // if (gotFrame)
@@ -378,9 +431,13 @@ static void processCommandLineOptions(int argc, char *argv[]) {
     gotTwoPartOption = FALSE;
     // Look for two-part options first.
     if ((i + 1) < argc) {
-      if (strcmp(argv[i], "--vconf") == 0) {
+      if (strcmp(argv[i], "--vconfl") == 0) {
         i++;
-        vconf = argv[i];
+        vconfl = argv[i];
+        gotTwoPartOption = TRUE;
+      } else if (strcmp(argv[i], "--vconfr") == 0) {
+        i++;
+        vconfr = argv[i];
         gotTwoPartOption = TRUE;
       } else if (strcmp(argv[i], "--cpara") == 0) {
         i++;
@@ -421,7 +478,8 @@ static void processCommandLineOptions(int argc, char *argv[]) {
 static void usage(char *com) {
   ARPRINT("Usage: %s [options]\n", com);
   ARPRINT("Options:\n");
-  ARPRINT("  --vconf <video parameter for the camera>\n");
+  ARPRINT("  --vconfl <video parameter for the left camera>\n");
+  ARPRINT("  --vconfr <video parameter for the right camera>\n");
   ARPRINT("  --cpara <camera parameter file for the camera>\n");
   ARPRINT("  --version: Print artoolkitX version and exit.\n");
   ARPRINT("  -loglevel=l: Set the log level to l, where l is one of DEBUG INFO "
