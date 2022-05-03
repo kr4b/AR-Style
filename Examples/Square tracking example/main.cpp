@@ -93,7 +93,7 @@ static int32_t viewport[4];
 static float projection[16];
 static SDL_Window *gSDLWindow = NULL;
 
-static ARController *arController = NULL;
+static ARController* arControllers[2] = {NULL};
 static ARG_API drawAPI = ARG_API_None;
 
 static long gFrameNo = 0;
@@ -206,11 +206,13 @@ int main(int argc, char *argv[]) {
   SDL_GL_GetDrawableSize(SDL_GL_GetCurrentWindow(), &w, &h);
   reshape(w, h);
 
-  // Initialise the ARController.
-  arController = new ARController();
-  if (!arController->initialiseBase()) {
-    ARLOGe("Error initialising ARController.\n");
-    quit(-1);
+  // Initialise the ARControllers
+  for (int i = 0; i <= 1; i++) {
+    arControllers[i] = new ARController();
+    if (!arControllers[i]->initialiseBase()) {
+      ARLOGe("Error initialising ARController.\n");
+      quit(-1);
+    }
   }
 
 #ifdef DEBUG
@@ -218,29 +220,30 @@ int main(int argc, char *argv[]) {
 #endif
 
   // Add trackables.
-  int markerIDs[markerCount];
-  int markerModelIDs[markerCount];
+  int markerIDs[2][markerCount];
+  int markerModelIDs[2][markerCount];
 #ifdef DEBUG
   char buf[MAXPATHLEN];
   ARLOGd("CWD is '%s'.\n", getcwd(buf, sizeof(buf)));
 #endif
   char *resourcesDir = arUtilGetResourcesDirectoryPath(
       AR_UTIL_RESOURCES_DIRECTORY_BEHAVIOR_BEST);
-  for (int i = 0; i < markerCount; i++) {
-    std::string markerConfig = "single;" + std::string(resourcesDir) + '/' +
-                               markers[i].name + ';' +
-                               std::to_string(markers[i].height);
-    markerIDs[i] = arController->addTrackable(markerConfig);
-    if (markerIDs[i] == -1) {
-      ARLOGe("Error adding marker.\n");
-      quit(-1);
+  for (int i = 0; i<= 1; i++) {
+    for (int j = 0; j < markerCount; j++) {
+      std::string markerConfig = "single;" + std::string(resourcesDir) + '/' +
+                                markers[j].name + ';' +
+                                std::to_string(markers[j].height);
+      markerIDs[i][j] = arControllers[i]->addTrackable(markerConfig);
+      if (markerIDs[i][j] == -1) {
+        ARLOGe("Error adding marker.\n");
+        quit(-1);
+      }
     }
+    arControllers[i]->getSquareTracker()->setPatternDetectionMode(
+        AR_TEMPLATE_MATCHING_MONO);
+    arControllers[i]->getSquareTracker()->setThresholdMode(
+        AR_LABELING_THRESH_MODE_AUTO_BRACKETING);
   }
-  arController->getSquareTracker()->setPatternDetectionMode(
-      AR_TEMPLATE_MATCHING_MONO);
-  arController->getSquareTracker()->setThresholdMode(
-      AR_LABELING_THRESH_MODE_AUTO_BRACKETING);
-
 #ifdef DEBUG
   ARLOGd("vconfl is '%s'.\n", vconfl);
   ARLOGd("vconfr is '%s'.\n", vconfr);
@@ -269,8 +272,9 @@ int main(int argc, char *argv[]) {
   }
 
   // Start tracking.
-  arController->startRunningStereo(vconfl, cpara, NULL, 0, vconfr, cpara, NULL, 0, NULL, (const char*) stereoParameters, sizeof(stereoParameters));
-  // arController->startRunning(vconfl, cpara, NULL, 0);
+  // arController->startRunningStereo(vconfl, cpara, NULL, 0, vconfr, cpara, NULL, 0, NULL, (const char*) stereoParameters, sizeof(stereoParameters));
+  arControllers[0]->startRunning(vconfl, cpara, NULL, 0);
+  arControllers[1]->startRunning(vconfr, cpara, NULL, 0);
 
   drawInit();
 
@@ -296,39 +300,45 @@ int main(int argc, char *argv[]) {
         }
       } else if (ev.type == SDL_KEYDOWN) {
         if (ev.key.keysym.sym == SDLK_d) {
-          arController->getSquareTracker()->setDebugMode(
-              !arController->getSquareTracker()->debugMode());
+          for (int i = 0; i <= 1; i++) {
+            arControllers[i]->getSquareTracker()->setDebugMode(
+                !arControllers[i]->getSquareTracker()->debugMode());
+          }
         }
         if (ev.key.keysym.sym == SDLK_p) {
           arVideoCapStart();
         }
       }
     }
-
-    bool gotFrame = arController->capture();
+    bool gotFrame = true;
+    for (int i = 0; i <= 1; i++) {
+      gotFrame &= arControllers[i]->capture();
+    }
     if (!gotFrame) {
       arUtilSleep(1);
     } else {
       // ARLOGi("Got frame %ld.\n", gFrameNo);
       gFrameNo++;
 
-      if (!arController->update()) {
-        ARLOGe("Error in ARController::update().\n");
-        quit(-1);
+      for (int i = 0; i <= 1; i++) {
+        if (!arControllers[i]->update()) {
+          ARLOGe("Error in ARController::update().\n");
+          quit(-1);
+        }
       }
 
       if (contextWasUpdated) {
 
         for (int i = 0; i <= 1; i++) {
-          if (!arController->drawVideoInit(i)) {
-            ARLOGe("Error in ARController::drawVideoInit(%d).\n", i);
+          if (!arControllers[i]->drawVideoInit(0)) {
+            ARLOGe("Error in ARController::drawVideoInit().\n");
             quit(-1);
           }
         }
 
         int width, height;
 
-        if (!arController->videoParameters(
+        if (!arControllers[0]->videoParameters(
               0, &width, &height, NULL)) {
           ARLOGe("Error in ARController::videoParameters().\n");
           quit(-1);
@@ -352,12 +362,12 @@ int main(int argc, char *argv[]) {
 
         for (int i = 0; i <= 1; i++) {
           // Set framebuffer viewport
-          if (!arController->drawVideoSettings(
-                  i, contentWidth / 2, contentHeight, false, false, false,
+          if (!arControllers[i]->drawVideoSettings(
+                  0, contentWidth / 2, contentHeight, false, false, false,
                   ARVideoView::HorizontalAlignment::H_ALIGN_CENTRE,
                   ARVideoView::VerticalAlignment::V_ALIGN_CENTRE,
                   ARVideoView::ScalingMode::SCALE_MODE_FIT, NULL)) {
-            ARLOGe("Error in ARController::drawVideoSettings(%d).\n", i);
+            ARLOGe("Error in ARController::drawVideoSettings().\n");
             quit(-1);
           }
         }
@@ -365,24 +375,28 @@ int main(int argc, char *argv[]) {
         drawSetup(drawAPI, false, false, false, contentWidth / 2, contentHeight);
         drawSetViewport(viewport);
 
-        for (int i = 0; i < markerCount; i++) {
-          markerModelIDs[i] = drawLoadModel(NULL);
+        for (int i = 0; i <= 1; i++) {
+          for (int j = 0; j < markerCount; j++) {
+            markerModelIDs[i][j] = drawLoadModel(NULL);
+          }
         }
         contextWasUpdated = false;
       }
 
-      // Look for trackables, and draw on each found one.
-      for (int j = 0; j < markerCount; j++) {
-        // Find the trackable for the given trackable ID.
-        ARTrackable *marker = arController->findTrackable(markerIDs[j]);
-        float view[16];
-        if (marker->visible) {
-          // arUtilPrintMtx16(marker->transformationMatrix);
-          for (int k = 0; k < 16; k++) {
-            view[k] = (float)marker->transformationMatrix[k];
+      for (int i = 0; i <= 1; i++) {
+        // Look for trackables, and draw on each found one.
+        for (int j = 0; j < markerCount; j++) {
+          // Find the trackable for the given trackable ID.
+          ARTrackable *marker = arControllers[i]->findTrackable(markerIDs[i][j]);
+          float view[16];
+          if (marker->visible) {
+            // arUtilPrintMtx16(marker->transformationMatrix);
+            for (int k = 0; k < 16; k++) {
+              view[k] = (float)marker->transformationMatrix[k];
+            }
           }
+          drawSetModel(markerModelIDs[i][j], marker->visible, view);
         }
-        drawSetModel(markerModelIDs[j], marker->visible, view);
       }
 
       SDL_GL_MakeCurrent(gSDLWindow, gSDLContext);
@@ -392,7 +406,7 @@ int main(int argc, char *argv[]) {
         drawPrepare();
 
         ARdouble projectionARD[16];
-        arController->projectionMatrix(i, 10.0f, 10000.0f, projectionARD);
+        arControllers[i]->projectionMatrix(0, 10.0f, 10000.0f, projectionARD);
         for (int i = 0; i < 16; i++) {
           projection[i] = (float)projectionARD[i];
         }
@@ -404,7 +418,7 @@ int main(int argc, char *argv[]) {
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
         // Display the current video frame to the current OpenGL context.
-        arController->drawVideo(i);
+        arControllers[i]->drawVideo(0);
 
         draw(i);
       }
@@ -490,10 +504,12 @@ static void usage(char *com) {
 
 static void quit(int rc) {
   drawCleanup();
-  if (arController) {
-    arController->drawVideoFinal(0);
-    arController->shutdown();
-    delete arController;
+  for (int i = 0; i <= 1; i++) {
+    if (arControllers[i]) {
+      arControllers[i]->drawVideoFinal(0);
+      arControllers[i]->shutdown();
+      delete arControllers[i];
+    }
   }
   if (gSDLContext) {
     SDL_GL_MakeCurrent(0, NULL);

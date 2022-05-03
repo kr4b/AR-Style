@@ -452,7 +452,7 @@ void draw(size_t index) {
     glEnable(GL_DEPTH_TEST);
     
     for (int i = 0; i < DRAW_MODELS_MAX; i++) {
-        if (gModelLoaded[i] && gModelVisbilities[i]) {
+        if (i == index && gModelLoaded[i] && gModelVisbilities[i]) {
             drawCube(viewProjection, &(gModelPoses[i][0]));
         }
     }
@@ -690,26 +690,26 @@ static void drawPost(size_t index) {
     glDrawArrays(GL_TRIANGLES, 0, 6);
 
     // Bilinear filter
-    // glUseProgram(postPrograms[1]);
-    // glBindFramebuffer(GL_FRAMEBUFFER, gFBOs[0]);
-    // glClear(GL_COLOR_BUFFER_BIT);
-    // glBindTexture(GL_TEXTURE_2D, gFBOTextures[1]);
+    glUseProgram(postPrograms[1]);
+    glBindFramebuffer(GL_FRAMEBUFFER, gFBOs[0]);
+    glClear(GL_COLOR_BUFFER_BIT);
+    glBindTexture(GL_TEXTURE_2D, gFBOTextures[1]);
 
-    // glUniform1f(uniforms[UNIFORM_WIDTH], float(gViewport[2] / 2));
-    // glUniform1f(uniforms[UNIFORM_HEIGHT], float(gViewport[3]));
+    glUniform1f(uniforms[UNIFORM_WIDTH], float(gViewport[2] / 2));
+    glUniform1f(uniforms[UNIFORM_HEIGHT], float(gViewport[3]));
 
-    // glDrawArrays(GL_TRIANGLES, 0, 6);
+    glDrawArrays(GL_TRIANGLES, 0, 6);
 
-    // // Edge detection
-    // glUseProgram(postPrograms[2]);
-    // glBindFramebuffer(GL_FRAMEBUFFER, gFBOs[1]);
-    // glClear(GL_COLOR_BUFFER_BIT);
-    // glBindTexture(GL_TEXTURE_2D, gFBOTextures[0]);
+    // Edge detection
+    glUseProgram(postPrograms[2]);
+    glBindFramebuffer(GL_FRAMEBUFFER, gFBOs[1]);
+    glClear(GL_COLOR_BUFFER_BIT);
+    glBindTexture(GL_TEXTURE_2D, gFBOTextures[0]);
 
-    // glUniform1f(uniforms[UNIFORM_WIDTH], float(gViewport[2] / 2));
-    // glUniform1f(uniforms[UNIFORM_HEIGHT], float(gViewport[3]));
+    glUniform1f(uniforms[UNIFORM_WIDTH], float(gViewport[2] / 2));
+    glUniform1f(uniforms[UNIFORM_HEIGHT], float(gViewport[3]));
 
-    // glDrawArrays(GL_TRIANGLES, 0, 6);
+    glDrawArrays(GL_TRIANGLES, 0, 6);
 
     // LAB to RGB
     glViewport(gViewport[0] + gViewport[2] / 2 * index, gViewport[1], gViewport[2] / 2, gViewport[3]);
