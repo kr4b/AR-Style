@@ -45,6 +45,8 @@ extern "C" {
 #endif
 
 void drawInit();
+void drawToggleStyle();
+void drawToggleModels();
 void drawSetup(ARG_API drawAPI_in, bool rotate90_in, bool flipH_in, bool flipV_in, int width, int height);
 void drawPrepare();
 int drawLoadModel(const char *path);

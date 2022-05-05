@@ -114,6 +114,7 @@ set(SOURCE
     ../OBJ_Loader.h
     ../draw.h
     ../draw.cpp
+    ../utils.h
     # ${RESOURCES}
     ${FRAMEWORKS}
 )

@@ -278,6 +278,9 @@ int main(int argc, char *argv[]) {
 
   drawInit();
 
+  bool paused = true;
+  bool firstFrame = true;
+
   // Main loop.
   bool done = false;
   while (!done) {
@@ -305,15 +308,28 @@ int main(int argc, char *argv[]) {
                 !arControllers[i]->getSquareTracker()->debugMode());
           }
         }
-        if (ev.key.keysym.sym == SDLK_p) {
-          arVideoCapStart();
+        if (ev.key.keysym.sym == SDLK_v) {
+          drawToggleModels();
+        }
+        if (ev.key.keysym.sym == SDLK_TAB) {
+          drawToggleStyle();
+        }
+        if (ev.key.keysym.sym == SDLK_SPACE) {
+          paused = !paused;
         }
       }
     }
+
     bool gotFrame = true;
-    for (int i = 0; i <= 1; i++) {
-      gotFrame &= arControllers[i]->capture();
+    if (paused && !firstFrame) {
+      gotFrame = false;
+    } else {
+      firstFrame = false;
+      for (int i = 0; i <= 1; i++) {
+        gotFrame &= arControllers[i]->capture();
+      }
     }
+
     if (!gotFrame) {
       arUtilSleep(1);
     } else {

@@ -39,6 +39,8 @@
 
 #include "draw.h"
 #include "OBJ_Loader.h"
+#include "utils.h"
+
 #include <ARX/ARController.h>
 
 #if HAVE_GL
@@ -74,8 +76,11 @@
 #if HAVE_GLES2 || HAVE_GL3
 // Indices of GL program uniforms.
 enum {
-    UNIFORM_MODELVIEW_PROJECTION_MATRIX,
+    UNIFORM_VIEW_MATRIX,
+    UNIFORM_MODEL_MATRIX,
+    UNIFORM_PROJECTION_MATRIX,
     UNIFORM_DIFFUSE_COLOR,
+    UNIFORM_CAMERA_POSITION,
     UNIFORM_WIDTH,
     UNIFORM_HEIGHT,
     UNIFORM_COUNT
@@ -148,6 +153,8 @@ static ARG_API drawAPI = ARG_API_None;
 static bool rotate90 = false;
 static bool flipH = false;
 static bool flipV = false;
+static bool visible = true;
+static bool stylize = true;
 
 static int32_t gViewport[4] = {0};
 static float gProjection[16];
@@ -160,7 +167,7 @@ static objl::Mesh model;
 static std::vector<float> mVertices;
 static std::vector<float> mNormals;
 
-static void drawCube(float viewProjection[16], float pose[16]);
+static void drawModel(float pose[16]);
 static void drawPost(size_t index);
 
 void drawInit() {
@@ -177,6 +184,14 @@ void drawInit() {
         mVertices.insert(mVertices.end(), {vertex.Position.X, vertex.Position.Y, vertex.Position.Z});
         mNormals.insert(mNormals.end(), {vertex.Normal.X, vertex.Normal.Y, vertex.Normal.Z});
     }
+}
+
+void drawToggleModels() {
+    visible = !visible;
+}
+
+void drawToggleStyle() {
+    stylize = !stylize;
 }
 
 void drawSetup(ARG_API drawAPI_in, bool rotate90_in, bool flipH_in, bool flipV_in, int width, int height) {
@@ -351,7 +366,6 @@ void drawSetModel(int modelIndex, bool visible, float pose[16]) {
 }
 
 void draw(size_t index) {
-    float viewProjection[16];
     glViewport(0, 0, gViewport[2] / 2, gViewport[3]);
 
 #if HAVE_GL
@@ -371,11 +385,12 @@ void draw(size_t index) {
             const char vertShaderStringGLES2[] =
                 "attribute vec3 position;\n"
                 "attribute vec3 vNormal;\n"
-                "uniform mat4 modelViewProjectionMatrix;\n"
+                "uniform mat4 modelViewMatrix;\n"
+                "uniform mat4 projectionMatrix;\n"
                 "out vec3 normal;\n"
                 "void main() {\n"
+                    "gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);\n"
                     "normal = vNormal;\n"
-                    "gl_Position = modelViewProjectionMatrix * vec4(position, 1.0);\n"
                 "}\n";
             const char fragShaderStringGLES2[] =
                 "#ifdef GL_ES\n"
@@ -389,22 +404,35 @@ void draw(size_t index) {
                 "}\n";
             const char vertShaderStringGL3[] =
                 "#version 150\n"
-                "in vec3 position;\n"
+                "in vec3 vPosition;\n"
                 "in vec3 vNormal;\n"
-                "uniform mat4 modelViewProjectionMatrix;\n"
+                "uniform mat4 model;\n"
+                "uniform mat4 view;\n"
+                "uniform mat4 projection;\n"
                 "out vec3 normal;\n"
+                "out vec3 position;\n"
                 "void main() {\n"
-                    "gl_Position = modelViewProjectionMatrix * vec4(position, 1.0);\n"
-                    "normal = vNormal;\n"
+                    "vec4 modelPosition = model * vec4(vPosition, 1.0);\n"
+                    "gl_Position = projection * view * modelPosition;\n"
+                    "normal = normalize((model * vec4(vNormal, 0.0)).xyz);\n"
+                    "position = modelPosition.xyz;\n"
                 "}\n";
             const char fragShaderStringGL3[] =
                 "#version 150\n"
                 "out vec4 FragColor;\n"
                 "uniform vec3 diffuseColor;\n"
+                "uniform vec3 cameraPos;\n"
+                "uniform mat4 view;\n"
                 "in vec3 normal;\n"
+                "in vec3 position;\n"
                 "void main() {\n"
-                    "float intensity = dot(normalize(vec3(5.0, 10.0, 1.0)), normal);\n"
-                    "FragColor = vec4(intensity * diffuseColor, 1.0);\n"
+                    "vec3 lightPos = (vec4(-50.0, 0.0, -80.0, 1.0)).xyz;\n"
+                    "vec3 lightDir = normalize(position - lightPos);\n"
+                    "vec3 viewDir = normalize(position - cameraPos);\n "
+                    "vec3 reflection = reflect(lightDir, normal);\n"
+                    "float specular = clamp(dot(reflection, viewDir), 0.0, 1.0);\n"
+                    "float intensity = clamp(dot(normal, lightDir), 0.0, 1.0);\n"
+                    "FragColor = vec4(intensity * diffuseColor + pow(specular, 15) * vec3(1.0), 1.0);\n"
                 "}\n";
 
             if (program) arglGLDestroyShaders(0, 0, program);
@@ -422,6 +450,14 @@ void draw(size_t index) {
             }
             if (!arglGLCompileShaderFromString(&fragShader, GL_FRAGMENT_SHADER, drawAPI == ARG_API_GLES2 ? fragShaderStringGLES2 : fragShaderStringGL3)) {
                 ARLOGe("draw: Error compiling fragment shader.\n");
+                GLint maxLength = 0;
+                glGetShaderiv(fragShader, GL_INFO_LOG_LENGTH, &maxLength);
+
+                char errorLog[maxLength];
+                glGetShaderInfoLog(fragShader, maxLength, &maxLength, errorLog);
+
+                printf("%s\n", errorLog);
+
                 arglGLDestroyShaders(vertShader, fragShader, program);
                 program = 0;
                 return;
@@ -429,8 +465,8 @@ void draw(size_t index) {
             glAttachShader(program, vertShader);
             glAttachShader(program, fragShader);
             
-            glBindAttribLocation(program, ATTRIBUTE_VERTEX, "position");
-            glBindAttribLocation(program, ATTRIBUTE_NORMAL, "colour");
+            glBindAttribLocation(program, ATTRIBUTE_VERTEX, "vPosition");
+            glBindAttribLocation(program, ATTRIBUTE_NORMAL, "vNormal");
             if (!arglGLLinkProgram(program)) {
                 ARLOGe("draw: Error linking shader program.\n");
                 arglGLDestroyShaders(vertShader, fragShader, program);
@@ -440,20 +476,23 @@ void draw(size_t index) {
             arglGLDestroyShaders(vertShader, fragShader, 0); // After linking, shader objects can be deleted.
             
             // Retrieve linked uniform locations.
-            uniforms[UNIFORM_MODELVIEW_PROJECTION_MATRIX] = glGetUniformLocation(program, "modelViewProjectionMatrix");
+            uniforms[UNIFORM_VIEW_MATRIX] = glGetUniformLocation(program, "view");
+            uniforms[UNIFORM_MODEL_MATRIX] = glGetUniformLocation(program, "model");
+            uniforms[UNIFORM_PROJECTION_MATRIX] = glGetUniformLocation(program, "projection");
             uniforms[UNIFORM_DIFFUSE_COLOR] = glGetUniformLocation(program, "diffuseColor");
+            uniforms[UNIFORM_CAMERA_POSITION] = glGetUniformLocation(program, "cameraPos");
         }
         glUseProgram(program);
-        mtxLoadMatrixf(viewProjection, gProjection);
-        mtxMultMatrixf(viewProjection, gView);
     }
 #endif // HAVE_GLES2 || HAVE_GL3
 
     glEnable(GL_DEPTH_TEST);
-    
-    for (int i = 0; i < DRAW_MODELS_MAX; i++) {
-        if (i == index && gModelLoaded[i] && gModelVisbilities[i]) {
-            drawCube(viewProjection, &(gModelPoses[i][0]));
+
+    if (visible) {
+        for (int i = 0; i < DRAW_MODELS_MAX; i++) {
+            if (i == index && gModelLoaded[i] && gModelVisbilities[i]) {
+                drawModel(&(gModelPoses[i][0]));
+            }
         }
     }
 
@@ -461,16 +500,15 @@ void draw(size_t index) {
 }
 
 // Something to look at, draw a rotating colour cube.
-static void drawCube(float viewProjection[16], float pose[16]) {
+static void drawModel(float pose[16]) {
     int i;
 #if HAVE_GLES2 || HAVE_GL3
-    float modelViewProjection[16];
+    float modelMatrix[16];
 #endif
 
 #if HAVE_GL
     if (drawAPI == ARG_API_GL) {
         glPushMatrix(); // Save world coordinate system.
-        glMultMatrixf(pose);
         glScalef(40.0f, 40.0f, 40.0f);
         glRotatef(90.0f, 1.0f, 0.0f, 0.0f);
         glTranslatef(0.0f, 1.25f, 0.0f);
@@ -490,13 +528,17 @@ static void drawCube(float viewProjection[16], float pose[16]) {
 
 #if HAVE_GLES2 || HAVE_GL3
     if (drawAPI == ARG_API_GLES2 || drawAPI == ARG_API_GL3) {
-        mtxLoadMatrixf(modelViewProjection, viewProjection);
-        mtxMultMatrixf(modelViewProjection, pose);
-        mtxScalef(modelViewProjection, 40.0f, 40.0f, 40.0f);
-        mtxRotatef(modelViewProjection, 90.0f, 1.0f, 0.0f, 0.0f);
-        mtxTranslatef(modelViewProjection, 0.0f, 1.25f, 0.0f);
-        glUniformMatrix4fv(uniforms[UNIFORM_MODELVIEW_PROJECTION_MATRIX], 1, GL_FALSE, modelViewProjection);
+        mtxLoadIdentityf(modelMatrix);
+        mtxScalef(modelMatrix, 40.0f, 40.0f, 40.0f);
+        mtxRotatef(modelMatrix, 90.0f, 1.0f, 0.0f, 0.0f);
+        mtxTranslatef(modelMatrix, 0.0f, 1.25f, 0.0f);
+        glUniformMatrix4fv(uniforms[UNIFORM_VIEW_MATRIX], 1, GL_FALSE, pose);
+        glUniformMatrix4fv(uniforms[UNIFORM_MODEL_MATRIX], 1, GL_FALSE, modelMatrix);
+        glUniformMatrix4fv(uniforms[UNIFORM_PROJECTION_MATRIX], 1, GL_FALSE, gProjection);
         glUniform3f(uniforms[UNIFORM_DIFFUSE_COLOR], model.MeshMaterial.Kd.X, model.MeshMaterial.Kd.Y, model.MeshMaterial.Kd.Z);
+        float viewInv[16];
+        invertMatrix(pose, viewInv);
+        glUniform3f(uniforms[UNIFORM_CAMERA_POSITION], viewInv[12], viewInv[13], viewInv[14]);
 #  if HAVE_GLES2
         if (drawAPI == ARG_API_GLES2) {
             glVertexAttribPointer(ATTRIBUTE_VERTEX, 3, GL_FLOAT, GL_FALSE, 0, mVertices.data());
@@ -505,7 +547,7 @@ static void drawCube(float viewProjection[16], float pose[16]) {
             glEnableVertexAttribArray(ATTRIBUTE_NORMAL);
 #    ifdef DEBUG
             if (!arglGLValidateProgram(program)) {
-                ARLOGe("drawCube(): Error: shader program %d validation failed.\n", program);
+                ARLOGe("drawModel(): Error: shader program %d validation failed.\n", program);
                 return;
             }
 #    endif // DEBUG
@@ -536,7 +578,7 @@ static void drawCube(float viewProjection[16], float pose[16]) {
             glBindVertexArray(gModelVAO);
     #ifdef DEBUG
             if (!arglGLValidateProgram(program)) {
-                ARLOGe("drawCube() Error: shader program %d validation failed.\n", program);
+                ARLOGe("drawModel() Error: shader program %d validation failed.\n", program);
                 return;
             }
     #endif
@@ -689,27 +731,29 @@ static void drawPost(size_t index) {
 
     glDrawArrays(GL_TRIANGLES, 0, 6);
 
-    // Bilinear filter
-    glUseProgram(postPrograms[1]);
-    glBindFramebuffer(GL_FRAMEBUFFER, gFBOs[0]);
-    glClear(GL_COLOR_BUFFER_BIT);
-    glBindTexture(GL_TEXTURE_2D, gFBOTextures[1]);
+    if (stylize) {
+        // Bilinear filter
+        glUseProgram(postPrograms[1]);
+        glBindFramebuffer(GL_FRAMEBUFFER, gFBOs[0]);
+        glClear(GL_COLOR_BUFFER_BIT);
+        glBindTexture(GL_TEXTURE_2D, gFBOTextures[1]);
 
-    glUniform1f(uniforms[UNIFORM_WIDTH], float(gViewport[2] / 2));
-    glUniform1f(uniforms[UNIFORM_HEIGHT], float(gViewport[3]));
+        glUniform1f(uniforms[UNIFORM_WIDTH], float(gViewport[2] / 2));
+        glUniform1f(uniforms[UNIFORM_HEIGHT], float(gViewport[3]));
 
-    glDrawArrays(GL_TRIANGLES, 0, 6);
+        glDrawArrays(GL_TRIANGLES, 0, 6);
 
-    // Edge detection
-    glUseProgram(postPrograms[2]);
-    glBindFramebuffer(GL_FRAMEBUFFER, gFBOs[1]);
-    glClear(GL_COLOR_BUFFER_BIT);
-    glBindTexture(GL_TEXTURE_2D, gFBOTextures[0]);
+        // Edge detection
+        glUseProgram(postPrograms[2]);
+        glBindFramebuffer(GL_FRAMEBUFFER, gFBOs[1]);
+        glClear(GL_COLOR_BUFFER_BIT);
+        glBindTexture(GL_TEXTURE_2D, gFBOTextures[0]);
 
-    glUniform1f(uniforms[UNIFORM_WIDTH], float(gViewport[2] / 2));
-    glUniform1f(uniforms[UNIFORM_HEIGHT], float(gViewport[3]));
+        glUniform1f(uniforms[UNIFORM_WIDTH], float(gViewport[2] / 2));
+        glUniform1f(uniforms[UNIFORM_HEIGHT], float(gViewport[3]));
 
-    glDrawArrays(GL_TRIANGLES, 0, 6);
+        glDrawArrays(GL_TRIANGLES, 0, 6);
+    }
 
     // LAB to RGB
     glViewport(gViewport[0] + gViewport[2] / 2 * index, gViewport[1], gViewport[2] / 2, gViewport[3]);
