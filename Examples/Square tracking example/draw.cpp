@@ -39,7 +39,8 @@
 
 #include "draw.h"
 #include "OBJ_Loader.h"
-#include "utils.h"
+#include "utils.hpp"
+#include "voronoi.hpp"
 
 #include <ARX/ARController.h>
 
@@ -72,6 +73,7 @@
 #endif // HAVE_GLES2 || HAVE_GL3
 
 #define DRAW_MODELS_MAX 32
+#define PROGRAM_COUNT 5
 
 #if HAVE_GLES2 || HAVE_GL3
 // Indices of GL program uniforms.
@@ -93,7 +95,7 @@ enum {
 };
 static GLint uniforms[UNIFORM_COUNT] = {0};
 static GLuint program = 0;
-static GLuint postPrograms[4] = {0};
+static GLuint postPrograms[PROGRAM_COUNT] = {0};
 
 #if HAVE_GL3
 static GLuint gModelVAO = 0;
@@ -166,6 +168,7 @@ static bool gModelVisbilities[DRAW_MODELS_MAX];
 static objl::Mesh model;
 static std::vector<float> mVertices;
 static std::vector<float> mNormals;
+static Voronoi* voronoi;
 
 static void drawModel(float pose[16]);
 static void drawPost(size_t index);
@@ -233,22 +236,24 @@ void drawSetup(ARG_API drawAPI_in, bool rotate90_in, bool flipH_in, bool flipV_i
     if (!glFramebufferRenderbuffer) glFramebufferRenderbuffer = (PFNGLFRAMEBUFFERRENDERBUFFERPROC)ARGL_GET_PROC_ADDRESS("glFramebufferRenderbuffer");
     if (!glDeleteRenderbuffers) glDeleteRenderbuffers = (PFNGLDELETERENDERBUFFERSPROC)ARGL_GET_PROC_ADDRESS("glDeleteRenderbuffers");
 
-	if (!glBindBuffer || !glDeleteBuffers || !glGenBuffers || !glBufferData ||
-		!glAttachShader || !glBindAttribLocation || !glCreateProgram || !glDeleteProgram ||
-		!glEnableVertexAttribArray || !glGetUniformLocation || !glUseProgram || !glUniformMatrix4fv || 
-		!glVertexAttribPointer || !glBindVertexArray || !glDeleteVertexArrays || !glGenVertexArrays ||
+    if (!glBindBuffer || !glDeleteBuffers || !glGenBuffers || !glBufferData ||
+        !glAttachShader || !glBindAttribLocation || !glCreateProgram || !glDeleteProgram ||
+        !glEnableVertexAttribArray || !glGetUniformLocation || !glUseProgram || !glUniformMatrix4fv ||
+        !glVertexAttribPointer || !glBindVertexArray || !glDeleteVertexArrays || !glGenVertexArrays ||
         !glGenFramebuffers || !glBindFramebuffer || !glFramebufferTexture2D || !glDeleteFramebuffers ||
         !glActiveTexture || !glGenTextures || !glBindTexture || !glTexImage2D || !glTexParameteri ||
         !glDeleteTextures || !glGenRenderbuffers || !glBindRenderbuffer || !glRenderbufferStorage ||
         !glFramebufferRenderbuffer || !glDeleteRenderbuffers) {
-		ARLOGe("Error: a required OpenGL function counld not be bound.\n");
-	}
+        ARLOGe("Error: a required OpenGL function counld not be bound.\n");
+    }
 #endif
 
     drawAPI = drawAPI_in;
     rotate90 = rotate90_in;
     flipH = flipH_in;
     flipV = flipV_in;
+
+    voronoi = new Voronoi(drawAPI, 80, 80, width, height);
 
 #if HAVE_GLES2 || HAVE_GL3
     glActiveTexture(GL_TEXTURE0);
@@ -316,6 +321,7 @@ void drawCleanup() {
     }
 #endif // HAVE_GLES2 || HAVE_GL3
     for (int i = 0; i < DRAW_MODELS_MAX; i++) gModelLoaded[i] = false;
+    delete voronoi;
 
     return;
 }
@@ -385,22 +391,34 @@ void draw(size_t index) {
             const char vertShaderStringGLES2[] =
                 "attribute vec3 position;\n"
                 "attribute vec3 vNormal;\n"
-                "uniform mat4 modelViewMatrix;\n"
-                "uniform mat4 projectionMatrix;\n"
+                "uniform mat4 model;\n"
+                "uniform mat4 view;\n"
+                "uniform mat4 projection;\n"
                 "out vec3 normal;\n"
+                "out vec3 position;\n"
                 "void main() {\n"
-                    "gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);\n"
-                    "normal = vNormal;\n"
+                    "vec4 modelPosition = model * vec4(vPosition, 1.0);\n"
+                    "gl_Position = projection * view * modelPosition;\n"
+                    "normal = normalize((model * vec4(vNormal, 0.0)).xyz);\n"
+                    "position = modelPosition.xyz;\n"
                 "}\n";
             const char fragShaderStringGLES2[] =
                 "#ifdef GL_ES\n"
                 "precision mediump float;\n"
                 "#endif\n"
                 "uniform vec3 diffuseColor;\n"
+                "uniform vec3 cameraPos;\n"
+                "uniform mat4 view;\n"
                 "in vec3 normal;\n"
+                "in vec3 position;\n"
                 "void main() {\n"
-                    "float intensity = dot(normalize(vec3(5.0, 10.0, 1.0)), normal);\n"
-                    "gl_FragColor = vec4(intensity * diffuseColor, 1.0);\n"
+                    "vec3 lightPos = (vec4(-50.0, 0.0, -80.0, 1.0)).xyz;\n"
+                    "vec3 lightDir = normalize(position - lightPos);\n"
+                    "vec3 viewDir = normalize(position - cameraPos);\n "
+                    "vec3 reflection = reflect(lightDir, normal);\n"
+                    "float specular = clamp(dot(reflection, viewDir), 0.0, 1.0);\n"
+                    "float intensity = clamp(dot(normal, lightDir), 0.0, 1.0);\n"
+                    "gl_FragColor = vec4(intensity * diffuseColor + pow(specular, 15) * vec3(1.0), 1.0);\n"
                 "}\n";
             const char vertShaderStringGL3[] =
                 "#version 150\n"
@@ -435,46 +453,12 @@ void draw(size_t index) {
                     "FragColor = vec4(intensity * diffuseColor + pow(specular, 15) * vec3(1.0), 1.0);\n"
                 "}\n";
 
-            if (program) arglGLDestroyShaders(0, 0, program);
-            program = glCreateProgram();
-            if (!program) {
-                ARLOGe("draw: Error creating shader program.\n");
-                return;
-            }
-            
-            if (!arglGLCompileShaderFromString(&vertShader, GL_VERTEX_SHADER, drawAPI == ARG_API_GLES2 ? vertShaderStringGLES2 : vertShaderStringGL3)) {
-                ARLOGe("draw: Error compiling vertex shader.\n");
-                arglGLDestroyShaders(vertShader, fragShader, program);
-                program = 0;
-                return;
-            }
-            if (!arglGLCompileShaderFromString(&fragShader, GL_FRAGMENT_SHADER, drawAPI == ARG_API_GLES2 ? fragShaderStringGLES2 : fragShaderStringGL3)) {
-                ARLOGe("draw: Error compiling fragment shader.\n");
-                GLint maxLength = 0;
-                glGetShaderiv(fragShader, GL_INFO_LOG_LENGTH, &maxLength);
+            program =
+                loadShaderProgram(NULL, drawAPI == ARG_API_GL3 ? vertShaderStringGL3 : vertShaderStringGLES2, NULL, drawAPI == ARG_API_GL3 ? fragShaderStringGL3 : fragShaderStringGLES2);
 
-                char errorLog[maxLength];
-                glGetShaderInfoLog(fragShader, maxLength, &maxLength, errorLog);
-
-                printf("%s\n", errorLog);
-
-                arglGLDestroyShaders(vertShader, fragShader, program);
-                program = 0;
-                return;
-            }
-            glAttachShader(program, vertShader);
-            glAttachShader(program, fragShader);
-            
             glBindAttribLocation(program, ATTRIBUTE_VERTEX, "vPosition");
             glBindAttribLocation(program, ATTRIBUTE_NORMAL, "vNormal");
-            if (!arglGLLinkProgram(program)) {
-                ARLOGe("draw: Error linking shader program.\n");
-                arglGLDestroyShaders(vertShader, fragShader, program);
-                program = 0;
-                return;
-            }
-            arglGLDestroyShaders(vertShader, fragShader, 0); // After linking, shader objects can be deleted.
-            
+
             // Retrieve linked uniform locations.
             uniforms[UNIFORM_VIEW_MATRIX] = glGetUniformLocation(program, "view");
             uniforms[UNIFORM_MODEL_MATRIX] = glGetUniformLocation(program, "model");
@@ -583,75 +567,13 @@ static void drawModel(float pose[16]) {
             }
     #endif
             glDrawArrays(GL_TRIANGLES, 0, model.Indices.size());
-            glBindVertexArray(0);
         }
 #  endif // HAVE_GL3
     }
 #endif // HAVE_GLES2 || HAVE_GL3
-}
-
-static GLuint loadShaderProgram(const std::string fragPathGL3, const std::string fragPathGLES2) {
-    GLuint program = 0;
-    GLuint vertShader = 0, fragShader = 0;
-    const char vertShaderStringGLES2[] =
-        "attribute vec2 position;\n"
-        "attribute vec2 texCoord;\n"
-        "out vec2 vTexCoord;\n"
-        "void main() {\n"
-            "gl_Position = vec4(position.x, position.y, 0.0, 1.0);\n"
-            "vTexCoord = texCoord;\n"
-        "}\n";
-    const char vertShaderStringGL3[] =
-        "#version 150\n"
-        "in vec2 position;\n"
-        "in vec2 texCoord;\n"
-        "out vec2 vTexCoord;\n"
-        "void main() {\n"
-            "gl_Position = vec4(position.x, position.y, 0.0, 1.0);\n"
-            "vTexCoord = texCoord;\n"
-        "}\n";
-
-    if (program) arglGLDestroyShaders(0, 0, program);
-    program = glCreateProgram();
-    if (!program) {
-        ARLOGe("loadShaderProgram: Error creating shader program.\n");
-        return 0;
-    }
-
-    if (!arglGLCompileShaderFromString(&vertShader, GL_VERTEX_SHADER, drawAPI == ARG_API_GLES2 ? vertShaderStringGLES2 : vertShaderStringGL3)) {
-        ARLOGe("loadShaderProgram: Error compiling vertex shader.\n");
-        arglGLDestroyShaders(vertShader, fragShader, program);
-        program = 0;
-        return 0;
-    }
-    if (!arglGLCompileShaderFromFile(&fragShader, GL_FRAGMENT_SHADER, drawAPI == ARG_API_GLES2 ? fragPathGLES2.c_str() : fragPathGL3.c_str())) {
-        ARLOGe("loadShaderProgram: Error compiling fragment shader.\n");
-        GLint maxLength = 0;
-        glGetShaderiv(fragShader, GL_INFO_LOG_LENGTH, &maxLength);
-
-        char errorLog[maxLength];
-        glGetShaderInfoLog(fragShader, maxLength, &maxLength, errorLog);
-
-        printf("%s\n", errorLog);
-
-        arglGLDestroyShaders(vertShader, fragShader, program);
-        program = 0;
-        return 0;
-    }
-    glAttachShader(program, vertShader);
-    glAttachShader(program, fragShader);
-
-    glBindAttribLocation(program, ATTRIBUTE_VERTEX, "position");
-    glBindAttribLocation(program, ATTRIBUTE_NORMAL, "texCoord");
-    if (!arglGLLinkProgram(program)) {
-        ARLOGe("loadShaderProgram: Error linking shader program.\n");
-        arglGLDestroyShaders(vertShader, fragShader, program);
-        program = 0;
-        return 0;
-    }
-    arglGLDestroyShaders(vertShader, fragShader, 0);
-
-    return program;
+#if HAVE_GL3
+    glBindVertexArray(0);
+#endif
 }
 
 static void drawPost(size_t index) {
@@ -662,6 +584,11 @@ static void drawPost(size_t index) {
         {0.0f, 0.0f}, {1.0f, 1.0f}, {0.0f, 1.0f},
         {0.0f, 0.0f}, {1.0f, 0.0f}, {1.0f, 1.0f} };
 
+    glViewport(0, 0, gViewport[2] / 2, gViewport[3]);
+    glBindFramebuffer(GL_FRAMEBUFFER, gFBOs[1]);
+
+    voronoi->drawPattern();
+
 #if HAVE_GLES2 || HAVE_GL3
     if (drawAPI == ARG_API_GLES2 || drawAPI == ARG_API_GL3) {
         if (!postPrograms[0]) {
@@ -671,12 +598,44 @@ static void drawPost(size_t index) {
             const std::string filter = std::string(resourcesDir) + "/filter.frag";
             const std::string edge = std::string(resourcesDir) + "/edge.frag";
             const std::string lab2rgb = std::string(resourcesDir) + "/lab2rgb.frag";
+            const std::string voronoiString = std::string(resourcesDir) + "/voronoi.frag";
             const std::string fragPathGLES2 = std::string(resourcesDir) + "/shaderES2.frag";
 
-            postPrograms[0] = loadShaderProgram(rgb2lab, fragPathGLES2);
-            postPrograms[1] = loadShaderProgram(filter, fragPathGLES2);
-            postPrograms[2] = loadShaderProgram(edge, fragPathGLES2);
-            postPrograms[3] = loadShaderProgram(lab2rgb, fragPathGLES2);
+            const char vertShaderStringGLES2[] =
+                "attribute vec2 position;\n"
+                "attribute vec2 texCoord;\n"
+                "out vec2 vTexCoord;\n"
+                "void main() {\n"
+                    "gl_Position = vec4(position.x, position.y, 0.0, 1.0);\n"
+                    "vTexCoord = texCoord;\n"
+                "}\n";
+            const char vertShaderStringGL3[] =
+                "#version 150\n"
+                "in vec2 position;\n"
+                "in vec2 texCoord;\n"
+                "out vec2 vTexCoord;\n"
+                "void main() {\n"
+                    "gl_Position = vec4(position.x, position.y, 0.0, 1.0);\n"
+                    "vTexCoord = texCoord;\n"
+                "}\n";
+
+            postPrograms[0] =
+                loadShaderProgram(NULL, drawAPI == ARG_API_GL3 ? vertShaderStringGL3 : vertShaderStringGLES2, drawAPI == ARG_API_GL3 ? rgb2lab.c_str() : fragPathGLES2.c_str(), NULL);
+            postPrograms[1] =
+                loadShaderProgram(NULL, drawAPI == ARG_API_GL3 ? vertShaderStringGL3 : vertShaderStringGLES2, drawAPI == ARG_API_GL3 ? filter.c_str() : fragPathGLES2.c_str(), NULL);
+            postPrograms[2] =
+                loadShaderProgram(NULL, drawAPI == ARG_API_GL3 ? vertShaderStringGL3 : vertShaderStringGLES2, drawAPI == ARG_API_GL3 ? edge.c_str() : fragPathGLES2.c_str(), NULL);
+            postPrograms[3] =
+                loadShaderProgram(NULL, drawAPI == ARG_API_GL3 ? vertShaderStringGL3 : vertShaderStringGLES2, drawAPI == ARG_API_GL3 ? lab2rgb.c_str() : fragPathGLES2.c_str(), NULL);
+            postPrograms[4] =
+                loadShaderProgram(NULL, drawAPI == ARG_API_GL3 ? vertShaderStringGL3 : vertShaderStringGLES2, drawAPI == ARG_API_GL3 ? voronoiString.c_str() : fragPathGLES2.c_str(), NULL);
+
+            for (size_t i = 0; i < PROGRAM_COUNT; i++) {
+                glBindAttribLocation(postPrograms[i], ATTRIBUTE_VERTEX, "position");
+                glBindAttribLocation(postPrograms[i], ATTRIBUTE_NORMAL, "texCoord");
+            }
+
+            voronoi->load(postPrograms[4]);
 
             uniforms[UNIFORM_WIDTH] = glGetUniformLocation(postPrograms[2], "width");
             uniforms[UNIFORM_HEIGHT] = glGetUniformLocation(postPrograms[2], "height");
@@ -689,8 +648,8 @@ static void drawPost(size_t index) {
             glEnableVertexAttribArray(ATTRIBUTE_VERTEX);
             glEnableVertexAttribArray(ATTRIBUTE_NORMAL);
 #    ifdef DEBUG
-            if (!arglGLValidateProgram(postProgram)) {
-                ARLOGe("drawPost(): Error: shader program %d validation failed.\n", postProgram);
+            if (!arglGLValidateProgram(postPrograms)) {
+                ARLOGe("drawPost(): Error: shader program %d validation failed.\n", postPrograms);
                 return;
             }
 #    endif // DEBUG
@@ -713,56 +672,67 @@ static void drawPost(size_t index) {
 
             glBindVertexArray(gQuadVAO);
     #ifdef DEBUG
-            if (!arglGLValidateProgram(postProgram)) {
-                ARLOGe("drawPost() Error: shader program %d validation failed.\n", postProgram);
+            if (!arglGLValidateProgram(postPrograms)) {
+                ARLOGe("drawPost() Error: shader program %d validation failed.\n", postPrograms);
                 return;
             }
     #endif
         }
 #  endif
-    glDisable(GL_DEPTH_TEST);
-    glViewport(0, 0, gViewport[2] / 2, gViewport[3]);
-
-    // RGB to LAB
-    glUseProgram(postPrograms[0]);
-    glBindFramebuffer(GL_FRAMEBUFFER, gFBOs[1]);
-    glClear(GL_COLOR_BUFFER_BIT);
-    glBindTexture(GL_TEXTURE_2D, gFBOTextures[0]);
-
-    glDrawArrays(GL_TRIANGLES, 0, 6);
-
-    if (stylize) {
-        // Bilinear filter
-        glUseProgram(postPrograms[1]);
-        glBindFramebuffer(GL_FRAMEBUFFER, gFBOs[0]);
-        glClear(GL_COLOR_BUFFER_BIT);
-        glBindTexture(GL_TEXTURE_2D, gFBOTextures[1]);
-
-        glUniform1f(uniforms[UNIFORM_WIDTH], float(gViewport[2] / 2));
-        glUniform1f(uniforms[UNIFORM_HEIGHT], float(gViewport[3]));
-
-        glDrawArrays(GL_TRIANGLES, 0, 6);
-
-        // Edge detection
-        glUseProgram(postPrograms[2]);
-        glBindFramebuffer(GL_FRAMEBUFFER, gFBOs[1]);
-        glClear(GL_COLOR_BUFFER_BIT);
-        glBindTexture(GL_TEXTURE_2D, gFBOTextures[0]);
-
-        glUniform1f(uniforms[UNIFORM_WIDTH], float(gViewport[2] / 2));
-        glUniform1f(uniforms[UNIFORM_HEIGHT], float(gViewport[3]));
-
-        glDrawArrays(GL_TRIANGLES, 0, 6);
-    }
-
-    // LAB to RGB
     glViewport(gViewport[0] + gViewport[2] / 2 * index, gViewport[1], gViewport[2] / 2, gViewport[3]);
-
-    glUseProgram(postPrograms[3]);
+    glUseProgram(postPrograms[4]);
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glDisable(GL_DEPTH_TEST);
+
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, gFBOTextures[0]);
+    glActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D, gFBOTextures[1]);
 
+    voronoi->prepare();
+
     glDrawArrays(GL_TRIANGLES, 0, 6);
+
+    // // RGB to LAB
+    // glUseProgram(postPrograms[0]);
+    // glBindFramebuffer(GL_FRAMEBUFFER, gFBOs[1]);
+    // glClear(GL_COLOR_BUFFER_BIT);
+    // glBindTexture(GL_TEXTURE_2D, gFBOTextures[0]);
+
+    // glDrawArrays(GL_TRIANGLES, 0, 6);
+
+    // if (stylize) {
+    //     // Bilinear filter
+    //     glUseProgram(postPrograms[1]);
+    //     glBindFramebuffer(GL_FRAMEBUFFER, gFBOs[0]);
+    //     glClear(GL_COLOR_BUFFER_BIT);
+    //     glBindTexture(GL_TEXTURE_2D, gFBOTextures[1]);
+
+    //     glUniform1f(uniforms[UNIFORM_WIDTH], float(gViewport[2] / 2));
+    //     glUniform1f(uniforms[UNIFORM_HEIGHT], float(gViewport[3]));
+
+    //     glDrawArrays(GL_TRIANGLES, 0, 6);
+
+    //     // Edge detection
+    //     glUseProgram(postPrograms[2]);
+    //     glBindFramebuffer(GL_FRAMEBUFFER, gFBOs[1]);
+    //     glClear(GL_COLOR_BUFFER_BIT);
+    //     glBindTexture(GL_TEXTURE_2D, gFBOTextures[0]);
+
+    //     glUniform1f(uniforms[UNIFORM_WIDTH], float(gViewport[2] / 2));
+    //     glUniform1f(uniforms[UNIFORM_HEIGHT], float(gViewport[3]));
+
+    //     glDrawArrays(GL_TRIANGLES, 0, 6);
+    // }
+
+    // // LAB to RGB
+    // glViewport(gViewport[0] + gViewport[2] / 2 * index, gViewport[1], gViewport[2] / 2, gViewport[3]);
+
+    // glUseProgram(postPrograms[3]);
+    // glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    // glBindTexture(GL_TEXTURE_2D, gFBOTextures[1]);
+
+    // glDrawArrays(GL_TRIANGLES, 0, 6);
 
     glBindTexture(GL_TEXTURE_2D, 0);
 #endif

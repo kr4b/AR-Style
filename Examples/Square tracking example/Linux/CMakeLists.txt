@@ -100,13 +100,15 @@ set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${DEVICE_FLAGS} -DGL_GLEXT_PROTOTYPES=1 -fPI
 set(RESOURCES
     ../hiro.patt
     ../kanji.patt
-    ../filter.frag
-    ../edge.frag
-    ../lab2rgb.frag
-    ../rgb2lab.frag
-    ../shaderES2.frag
-    ../shrek.mtl
-    ../shrek.obj
+    ../shaders/filter.frag
+    ../shaders/edge.frag
+    ../shaders/lab2rgb.frag
+    ../shaders/rgb2lab.frag
+    ../shaders/voronoi.frag
+    ../shaders/shaderES2.frag
+    ../models/shrek.mtl
+    ../models/shrek.obj
+    ../models/cone.obj
 )
 
 set(SOURCE
@@ -114,7 +116,8 @@ set(SOURCE
     ../OBJ_Loader.h
     ../draw.h
     ../draw.cpp
-    ../utils.h
+    ../utils.hpp
+    ../voronoi.hpp
     # ${RESOURCES}
     ${FRAMEWORKS}
 )

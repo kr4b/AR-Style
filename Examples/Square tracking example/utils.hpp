@@ -1,5 +1,37 @@
+#pragma once
+
+#include <ARX/ARController.h>
+
+#if HAVE_GL
+#  if ARX_TARGET_PLATFORM_MACOS
+#    include <OpenGL/gl.h>
+#  else
+#    include <GL/gl.h>
+#  endif
+#endif // HAVE_GL
+#if HAVE_GLES2 || HAVE_GL3
+#  include <ARX/ARG/mtx.h>
+#  include <ARX/ARG/shader_gl.h>
+#  if HAVE_GLES2
+#    if ARX_TARGET_PLATFORM_IOS
+#      include <OpenGLES/ES2/gl.h>
+#    else
+#      include <GLES2/gl2.h>
+#    endif
+#  else
+#    if ARX_TARGET_PLATFORM_MACOS
+#      include <OpenGL/gl3.h>
+#    else
+#      ifndef _WIN32
+#			define GL_GLEXT_PROTOTYPES
+#      endif
+#      include "GL/glcorearb.h"
+#    endif
+#  endif
+#endif // HAVE_GLES2 || HAVE_GL3
+
 // MESA glu invert matrix
-bool invertMatrix(const float m[16], float invOut[16]) {
+static bool invertMatrix(const float m[16], float invOut[16]) {
     float inv[16], det;
     int i;
 
@@ -126,4 +158,54 @@ bool invertMatrix(const float m[16], float invOut[16]) {
         invOut[i] = inv[i] * det;
 
     return true;
+}
+
+static GLuint loadShader(const char* shaderPath, const char* shaderString, GLenum type) {
+    GLuint shader;
+    GLint status = 0;
+    if (shaderPath) {
+        status = arglGLCompileShaderFromFile(&shader, type, shaderPath);
+    } else {
+        status = arglGLCompileShaderFromString(&shader, type, shaderString);
+    }
+    if (!status) {
+        ARLOGe("loadShaderProgram: Error compiling shader.\n");
+        GLint maxLength = 0;
+        glGetShaderiv(shader, GL_INFO_LOG_LENGTH, &maxLength);
+
+        char errorLog[maxLength];
+        glGetShaderInfoLog(shader, maxLength, &maxLength, errorLog);
+
+        printf("%s\n", errorLog);
+        return 0;
+    }
+    return shader;
+}
+
+static GLuint loadShaderProgram(const char* vertPath, const char* vertString, const char* fragPath, const char* fragString) {
+    GLuint program = glCreateProgram();
+    GLuint vertShader, fragShader;
+    if (!program) {
+        ARLOGe("loadShaderProgram: Error creating shader program.\n");
+        return 0;
+    }
+    vertShader = loadShader(vertPath, vertString, GL_VERTEX_SHADER);
+    fragShader = loadShader(fragPath, fragString, GL_FRAGMENT_SHADER);
+    if (!vertShader || !fragShader) {
+        arglGLDestroyShaders(vertShader, fragShader, program);
+        return 0;
+    }
+
+    glAttachShader(program, vertShader);
+    glAttachShader(program, fragShader);
+
+    if (!arglGLLinkProgram(program)) {
+        ARLOGe("loadShaderProgram: Error linking shader program.\n");
+        arglGLDestroyShaders(vertShader, fragShader, program);
+        return 0;
+    }
+
+    arglGLDestroyShaders(vertShader, fragShader, 0);
+
+    return program;
 }
