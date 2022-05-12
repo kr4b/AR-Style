@@ -222,8 +222,11 @@ public:
         glUniform1i(glGetUniformLocation(program, "centers"), 2);
     }
 
-    void prepare() {
+    void prepare(GLuint program, const float position[3], const float view[16], const float projection[16]) {
         glActiveTexture(GL_TEXTURE2);
         glBindTexture(GL_TEXTURE_1D, texture);
+        glUniform3fv(glGetUniformLocation(program, "highlight"), 1, position);
+        glUniformMatrix4fv(glGetUniformLocation(program, "view"), 1, GL_FALSE, view);
+        glUniformMatrix4fv(glGetUniformLocation(program, "projection"), 1, GL_FALSE, projection);
     }
 };

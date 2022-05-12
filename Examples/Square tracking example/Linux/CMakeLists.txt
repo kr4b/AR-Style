@@ -132,6 +132,8 @@ set_target_properties(${PROJECT_NAME} PROPERTIES
     INSTALL_RPATH "\$ORIGIN/../lib"
 )
 
+target_include_directories(${PROJECT_NAME} PRIVATE ${OpenCV_INCLUDE_DIR})
+
 target_link_libraries(${PROJECT_NAME}
     ARX
     ${SDL2_LIBRARY}

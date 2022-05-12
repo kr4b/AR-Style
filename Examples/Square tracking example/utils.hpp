@@ -160,6 +160,18 @@ static bool invertMatrix(const float m[16], float invOut[16]) {
     return true;
 }
 
+// MESA transform vector
+void transformVector(const GLfloat v[4], const GLfloat m[16], GLfloat u[4]) {
+   const GLfloat v0 = v[0], v1 = v[1], v2 = v[2], v3 = v[3];
+#define M(row,col)  m[row*4 + col]
+   u[0] = v0 * M(0,0) + v1 * M(1,0) + v2 * M(2,0) + v3 * M(3,0);
+   u[1] = v0 * M(0,1) + v1 * M(1,1) + v2 * M(2,1) + v3 * M(3,1);
+   u[2] = v0 * M(0,2) + v1 * M(1,2) + v2 * M(2,2) + v3 * M(3,2);
+   u[3] = v0 * M(0,3) + v1 * M(1,3) + v2 * M(2,3) + v3 * M(3,3);
+#undef M
+}
+
+
 static GLuint loadShader(const char* shaderPath, const char* shaderString, GLenum type) {
     GLuint shader;
     GLint status = 0;

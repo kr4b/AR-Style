@@ -254,25 +254,36 @@ int main(int argc, char *argv[]) {
   //   -0.01923079, -0.52406532, -0.85146105, -0.03396377,
   //   0.01991405,  0.85124886, -0.52438444,  0.34131616
   // };
-  const double stereoParametersRaw[12] = {
-    1.0, 0.0, 0.0, 0.095,
-    0.0, 1.0, 0.0, 0.095,
-    0.0, 0.0, 1.0, 0.095
-  };
+  // const double stereoParametersRaw[12] = {
+  //   1.0, 0.0, 0.0, 0.095,
+  //   0.0, 1.0, 0.0, 0.095,
+  //   0.0, 0.0, 1.0, 0.095
+  // };
   // const double stereoParametersRaw[12] = {
   //   1.0, 0.0, 0.0, 0.0,
   //   0.0, 1.0, 0.0, 0.0,
   //   0.0, 0.0, 1.0, 0.0,
   // };
-  char stereoParameters[sizeof(stereoParametersRaw)];
-  for (int i = 0; i < 12; i++) {
-    for (int j = 0; j < sizeof(double); j++) {
-      stereoParameters[i * sizeof(double) + sizeof(double) - j - 1] = ((char*) &stereoParametersRaw[i])[j];
-    }
-  }
+  // char stereoParameters[sizeof(stereoParametersRaw)];
+  // for (int i = 0; i < 12; i++) {
+  //   for (int j = 0; j < sizeof(double); j++) {
+  //     stereoParameters[i * sizeof(double) + sizeof(double) - j - 1] = ((char*) &stereoParametersRaw[i])[j];
+  //   }
+  // }
 
   // Start tracking.
   // arController->startRunningStereo(vconfl, cpara, NULL, 0, vconfr, cpara, NULL, 0, NULL, (const char*) stereoParameters, sizeof(stereoParameters));
+  // const double cparaRaw[12] = {
+  //   1422.2222, 0.0, 512.0, 0.0,
+  //   0.0, 2133.3333, 512.0, 0.0,
+  //   0.0, 0.0, 1.0, 0.0
+  // };
+  // char cpara2[sizeof(cparaRaw)];
+  // for (int i = 0; i < 12; i++) {
+  //   for (int j = 0; j < sizeof(double); j++) {
+  //     cpara2[i * sizeof(double) + sizeof(double) - j - 1] = ((char*) &cparaRaw[i])[j];
+  //   }
+  // }
   arControllers[0]->startRunning(vconfl, cpara, NULL, 0);
   arControllers[1]->startRunning(vconfr, cpara, NULL, 0);
 
@@ -280,6 +291,7 @@ int main(int argc, char *argv[]) {
 
   bool paused = true;
   bool firstFrame = true;
+  int width, height;
 
   // Main loop.
   bool done = false;
@@ -310,6 +322,9 @@ int main(int argc, char *argv[]) {
         }
         if (ev.key.keysym.sym == SDLK_v) {
           drawToggleModels();
+        }
+        if (ev.key.keysym.sym == SDLK_h) {
+          drawToggleHighlight();
         }
         if (ev.key.keysym.sym == SDLK_TAB) {
           drawToggleStyle();
@@ -344,15 +359,12 @@ int main(int argc, char *argv[]) {
       }
 
       if (contextWasUpdated) {
-
         for (int i = 0; i <= 1; i++) {
           if (!arControllers[i]->drawVideoInit(0)) {
             ARLOGe("Error in ARController::drawVideoInit().\n");
             quit(-1);
           }
         }
-
-        int width, height;
 
         if (!arControllers[0]->videoParameters(
               0, &width, &height, NULL)) {
@@ -399,6 +411,16 @@ int main(int argc, char *argv[]) {
         contextWasUpdated = false;
       }
 
+      std::vector<unsigned char> frames[2];
+
+      for (int i = 0; i <= 1; i++) {
+        frames[i].reserve(width * height * 4);
+        arControllers[i]->updateTextureRGBA32(0, (uint32_t*) frames[i].data());
+      }
+
+      drawUpdate(width, height, frames);
+      // done = true;
+
       for (int i = 0; i <= 1; i++) {
         // Look for trackables, and draw on each found one.
         for (int j = 0; j < markerCount; j++) {
@@ -422,10 +444,16 @@ int main(int argc, char *argv[]) {
         drawPrepare();
 
         ARdouble projectionARD[16];
-        arControllers[i]->projectionMatrix(0, 10.0f, 10000.0f, projectionARD);
-        for (int i = 0; i < 16; i++) {
-          projection[i] = (float)projectionARD[i];
+        arControllers[i]->projectionMatrix(0, 0.1f, 1000.0f, projectionARD);
+        for (int j = 0; j < 16; j++) {
+          projection[j] = (float)projectionARD[j];
+          printf("%f, ", projection[j]);
         }
+// 2.416574, 0.000000, 0.000000, 0.000000,
+// 0.000000, 2.416574, 0.000000, 0.000000,
+// -0.000978, 0.000978, -1.000200, -1.000000,
+// 0.000000, 0.000000, -0.200020, 0.000000,
+        printf("\n");
 
         drawSetCamera(projection, NULL);
 

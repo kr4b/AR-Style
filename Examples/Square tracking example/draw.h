@@ -39,6 +39,7 @@
 #include <ARX/AR/config.h>
 #include <ARX/ARG/arg.h>
 #include <stdint.h>
+#include <vector>
 
 #ifdef __cplusplus
 extern "C" {
@@ -47,7 +48,9 @@ extern "C" {
 void drawInit();
 void drawToggleStyle();
 void drawToggleModels();
+void drawToggleHighlight();
 void drawSetup(ARG_API drawAPI_in, bool rotate90_in, bool flipH_in, bool flipV_in, int width, int height);
+void drawUpdate(int width, int height, std::vector<unsigned char> frames[2]);
 void drawPrepare();
 int drawLoadModel(const char *path);
 void drawSetViewport(int32_t viewport[4]);

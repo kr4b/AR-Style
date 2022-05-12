@@ -44,6 +44,13 @@
 
 #include <ARX/ARController.h>
 
+#include <opencv2/core.hpp>
+#include <opencv2/core/traits.hpp>
+#include <opencv2/stereo.hpp>
+#include <opencv2/calib3d.hpp>
+#include <opencv2/imgproc.hpp>
+#include <opencv2/imgcodecs.hpp>
+
 #if HAVE_GL
 #  if ARX_TARGET_PLATFORM_MACOS
 #    include <OpenGL/gl.h>
@@ -157,6 +164,7 @@ static bool flipH = false;
 static bool flipV = false;
 static bool visible = true;
 static bool stylize = true;
+static bool highlight = true;
 
 static int32_t gViewport[4] = {0};
 static float gProjection[16];
@@ -171,7 +179,10 @@ static std::vector<float> mNormals;
 static Voronoi* voronoi;
 
 static void drawModel(float pose[16]);
-static void drawPost(size_t index);
+static void drawPost(size_t index, const float pose[16]);
+static cv::Ptr<cv::StereoSGBM> stereo;
+static cv::Mat depth;
+static float position[3] = {0};
 
 void drawInit() {
     const char *resourcesDir = arUtilGetResourcesDirectoryPath(
@@ -187,6 +198,10 @@ void drawInit() {
         mVertices.insert(mVertices.end(), {vertex.Position.X, vertex.Position.Y, vertex.Position.Z});
         mNormals.insert(mNormals.end(), {vertex.Normal.X, vertex.Normal.Y, vertex.Normal.Z});
     }
+
+    stereo = cv::StereoSGBM::create(0, 128, 9);
+    // stereo->setMode(cv::stereo::StereoBinarySGBM::MODE_HH);
+    // stereo->setSpeckleWindowSize(0);
 }
 
 void drawToggleModels() {
@@ -195,6 +210,10 @@ void drawToggleModels() {
 
 void drawToggleStyle() {
     stylize = !stylize;
+}
+
+void drawToggleHighlight() {
+    highlight = !highlight;
 }
 
 void drawSetup(ARG_API drawAPI_in, bool rotate90_in, bool flipH_in, bool flipV_in, int width, int height) {
@@ -286,6 +305,40 @@ void drawSetup(ARG_API drawAPI_in, bool rotate90_in, bool flipH_in, bool flipV_i
 #endif
 
     return;
+}
+
+void drawUpdate(int width, int height, std::vector<unsigned char> frames[2]) {
+    if (depth.elemSize() > 0) {
+        return;
+    }
+    cv::Mat left(width, height, CV_8UC4, frames[0].data());
+    cv::Mat right(width, height, CV_8UC4, frames[1].data());
+    cv::Mat leftGray, rightGray, disparity;
+
+    cv::cvtColor(left, leftGray, cv::COLOR_RGBA2GRAY);
+    cv::cvtColor(right, rightGray, cv::COLOR_RGBA2GRAY);
+
+    stereo->compute(leftGray, rightGray, disparity);
+    disparity.convertTo(disparity, CV_32F, 1.0);
+
+    // width / camera width * interocular distance * focal plane distance
+    // TODO: This is not quite right, it should be:
+    //        width / camera width * baseline distance * focal length
+    // disparity = float(width) / 0.036f * 0.095f * 1.95f / (disparity / 16.0f);
+    disparity = (disparity / 16.0f + 1.0f) / float(stereo->getNumDisparities());
+    depth = 0.6f / disparity;
+
+    // float min = 1000.0f, max = -1000.0f;
+    // for (int i = 0; i < width * height; i++) {
+    //     const float d = disparity.at<float>(i);
+    //     if (d < min) min = d;
+    //     if (d > max) max = d;
+    // }
+
+    // printf("%f, %f\n", min, max);
+
+    // cv::imwrite("disparity.jpg", disparity * 255.0f);
+    // done = true;
 }
 
 void drawPrepare() {
@@ -472,15 +525,17 @@ void draw(size_t index) {
 
     glEnable(GL_DEPTH_TEST);
 
+    size_t poseIndex = 0;
     if (visible) {
         for (int i = 0; i < DRAW_MODELS_MAX; i++) {
             if (i == index && gModelLoaded[i] && gModelVisbilities[i]) {
                 drawModel(&(gModelPoses[i][0]));
+                poseIndex = i;
             }
         }
     }
 
-    drawPost(index);
+    drawPost(index, &(gModelPoses[poseIndex][0]));
 }
 
 // Something to look at, draw a rotating colour cube.
@@ -523,6 +578,7 @@ static void drawModel(float pose[16]) {
         float viewInv[16];
         invertMatrix(pose, viewInv);
         glUniform3f(uniforms[UNIFORM_CAMERA_POSITION], viewInv[12], viewInv[13], viewInv[14]);
+
 #  if HAVE_GLES2
         if (drawAPI == ARG_API_GLES2) {
             glVertexAttribPointer(ATTRIBUTE_VERTEX, 3, GL_FLOAT, GL_FALSE, 0, mVertices.data());
@@ -576,7 +632,7 @@ static void drawModel(float pose[16]) {
 #endif
 }
 
-static void drawPost(size_t index) {
+static void drawPost(size_t index, const float pose[16]) {
     const GLfloat vertices [6][2] = {
         {-1.0f, -1.0f}, {1.0f, 1.0f}, {-1.0f, 1.0f},
         {-1.0f, -1.0f}, {1.0f, -1.0f}, {1.0f, 1.0f} };
@@ -689,7 +745,56 @@ static void drawPost(size_t index) {
     glActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D, gFBOTextures[1]);
 
-    voronoi->prepare();
+    if (highlight && position[0] == 0.0f) {
+        const int x = 840;
+        const int y = 700;
+        const float d = depth.at<float>(x, y);
+        printf("%f\n", d * 2.0f - 1.0f);
+        const float projPos[4] = { float(x) / 1024.0f * 2.0f - 1.0f, float(y) / 1024.0f * 2.0f - 1.0f, d * 2.0f - 1.0f, 1.0f };
+
+        float projInv[16];
+        invertMatrix(gProjection, projInv);
+        float viewPos[4];
+        transformVector(projPos, projInv, viewPos);
+        for (int i = 0; i < 4; i++) {
+            viewPos[i] /= viewPos[3];
+        }
+
+        float viewInv[16];
+        invertMatrix(pose, viewInv);
+        float worldPos[4];
+        transformVector(viewPos, viewInv, worldPos);
+
+        for (int i = 0; i < 3; i++) {
+            position[i] = worldPos[i];
+        }
+
+        printf("%f, %f, %f, %f\n", projPos[0], projPos[1], projPos[2], projPos[3]);
+        printf("%f, %f, %f, %f\n", viewPos[0], viewPos[1], viewPos[2], viewPos[3]);
+        printf("%f, %f, %f, %f\n", worldPos[0], worldPos[1], worldPos[2], worldPos[3]);
+    }
+
+
+    if (index == 0) {
+        float worldPos[4];
+        worldPos[3] = 1.0f;
+        for (int i = 0; i < 3; i++) {
+            worldPos[i] = position[i];
+        }
+        float temp1[4];
+        transformVector(worldPos, pose, temp1);
+        float temp2[4];
+        transformVector(temp1, gProjection, temp2);
+
+        for (int i = 0; i < 4; i++) {
+            temp2[i] /= temp2[3];
+        }
+
+        // printf("%f, %f, %f, %f\n", temp1[0], temp1[1], temp1[2], temp1[3]);
+        // printf("%f, %f, %f, %f\n", temp2[0], temp2[1], temp2[2], temp2[3]);
+    }
+
+    voronoi->prepare(postPrograms[4], position, pose, gProjection);
 
     glDrawArrays(GL_TRIANGLES, 0, 6);
 
