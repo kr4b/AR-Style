@@ -199,9 +199,11 @@ void drawInit() {
         mNormals.insert(mNormals.end(), {vertex.Normal.X, vertex.Normal.Y, vertex.Normal.Z});
     }
 
-    stereo = cv::StereoSGBM::create(0, 128, 9);
-    // stereo->setMode(cv::stereo::StereoBinarySGBM::MODE_HH);
-    // stereo->setSpeckleWindowSize(0);
+    stereo = cv::StereoSGBM::create(0, 128, 21);
+    stereo->setMode(cv::StereoSGBM::MODE_HH);
+    // stereo->setUniquenessRatio(10);
+    // stereo->setSpeckleWindowSize(100);
+    // stereo->setSpeckleRange(2);
 }
 
 void drawToggleModels() {
@@ -325,19 +327,19 @@ void drawUpdate(int width, int height, std::vector<unsigned char> frames[2]) {
     // TODO: This is not quite right, it should be:
     //        width / camera width * baseline distance * focal length
     // disparity = float(width) / 0.036f * 0.095f * 1.95f / (disparity / 16.0f);
-    disparity = (disparity / 16.0f + 1.0f) / float(stereo->getNumDisparities());
-    depth = 0.6f / disparity;
+    disparity = (disparity / 16.0f) / float(stereo->getNumDisparities());
+    depth = 0.508786f / disparity;
 
     // float min = 1000.0f, max = -1000.0f;
     // for (int i = 0; i < width * height; i++) {
     //     const float d = disparity.at<float>(i);
-    //     if (d < min) min = d;
+    //     if (d > 0 && d < min) min = d;
     //     if (d > max) max = d;
     // }
 
     // printf("%f, %f\n", min, max);
 
-    // cv::imwrite("disparity.jpg", disparity * 255.0f);
+    // cv::imwrite("disparity.jpg", depth * 255.0f);
     // done = true;
 }
 
@@ -746,11 +748,12 @@ static void drawPost(size_t index, const float pose[16]) {
     glBindTexture(GL_TEXTURE_2D, gFBOTextures[1]);
 
     if (highlight && position[0] == 0.0f) {
-        const int x = 840;
-        const int y = 700;
+        const int x = 575;
+        const int y = 395;
         const float d = depth.at<float>(x, y);
         printf("%f\n", d * 2.0f - 1.0f);
-        const float projPos[4] = { float(x) / 1024.0f * 2.0f - 1.0f, float(y) / 1024.0f * 2.0f - 1.0f, d * 2.0f - 1.0f, 1.0f };
+        const float projPos[4] = { float(x) / 1024.0f * 2.0f - 1.0f, float(y) / 1024.0f * -2.0f + 1.0f, d, 1.0f };
+        // const float projPos[4] = { -0.5f, -0.5f, 1.00002f, 1.0f };
 
         float projInv[16];
         invertMatrix(gProjection, projInv);

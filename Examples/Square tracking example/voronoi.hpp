@@ -228,5 +228,11 @@ public:
         glUniform3fv(glGetUniformLocation(program, "highlight"), 1, position);
         glUniformMatrix4fv(glGetUniformLocation(program, "view"), 1, GL_FALSE, view);
         glUniformMatrix4fv(glGetUniformLocation(program, "projection"), 1, GL_FALSE, projection);
+        float modelMatrix[16];
+        mtxLoadIdentityf(modelMatrix);
+        mtxScalef(modelMatrix, 40.0f, 40.0f, 40.0f);
+        mtxRotatef(modelMatrix, 90.0f, 1.0f, 0.0f, 0.0f);
+        mtxTranslatef(modelMatrix, 0.0f, 1.25f, 0.0f);
+        glUniformMatrix4fv(glGetUniformLocation(program, "model"), 1, GL_FALSE, modelMatrix);
     }
 };

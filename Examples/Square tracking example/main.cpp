@@ -274,9 +274,15 @@ int main(int argc, char *argv[]) {
   // Start tracking.
   // arController->startRunningStereo(vconfl, cpara, NULL, 0, vconfr, cpara, NULL, 0, NULL, (const char*) stereoParameters, sizeof(stereoParameters));
   // const double cparaRaw[12] = {
-  //   1422.2222, 0.0, 512.0, 0.0,
-  //   0.0, 2133.3333, 512.0, 0.0,
-  //   0.0, 0.0, 1.0, 0.0
+    // 1422.2222, 0.0, 512.0, 0.0,
+    // 0.0, 2133.3333, 512.0, 0.0,
+    // 0.0, 0.0, 1.0, 0.0
+    // 1431.8732, 397.3820, -276.9242, 692.5042,
+    // -17.1545, -309.4979, -1479.4517, 126.4498,
+    // 0.0199, 0.8512, -0.5244, 0.3413
+  //   0.9996, -0.0270, -0.0059, 0.3640,
+  //   -0.0192, -0.5241, -0.8515, -0.0340,
+  //    0.0199, 0.8512, -0.5244, 0.3413
   // };
   // char cpara2[sizeof(cparaRaw)];
   // for (int i = 0; i < 12; i++) {
@@ -284,8 +290,11 @@ int main(int argc, char *argv[]) {
   //     cpara2[i * sizeof(double) + sizeof(double) - j - 1] = ((char*) &cparaRaw[i])[j];
   //   }
   // }
+
   arControllers[0]->startRunning(vconfl, cpara, NULL, 0);
   arControllers[1]->startRunning(vconfr, cpara, NULL, 0);
+  // arControllers[0]->startRunning(vconfl, NULL, cpara2, sizeof(cpara2));
+  // arControllers[1]->startRunning(vconfr, NULL, cpara2, sizeof(cpara2));
 
   drawInit();
 
@@ -447,13 +456,11 @@ int main(int argc, char *argv[]) {
         arControllers[i]->projectionMatrix(0, 0.1f, 1000.0f, projectionARD);
         for (int j = 0; j < 16; j++) {
           projection[j] = (float)projectionARD[j];
-          printf("%f, ", projection[j]);
         }
 // 2.416574, 0.000000, 0.000000, 0.000000,
 // 0.000000, 2.416574, 0.000000, 0.000000,
 // -0.000978, 0.000978, -1.000200, -1.000000,
 // 0.000000, 0.000000, -0.200020, 0.000000,
-        printf("\n");
 
         drawSetCamera(projection, NULL);
 
