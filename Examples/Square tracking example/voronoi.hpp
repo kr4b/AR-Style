@@ -30,7 +30,7 @@
 #      include <OpenGL/gl3.h>
 #    else
 #      ifndef _WIN32
-#			define GL_GLEXT_PROTOTYPES
+#        define GL_GLEXT_PROTOTYPES
 #      endif
 #      include "GL/glcorearb.h"
 #    endif
@@ -222,17 +222,12 @@ public:
         glUniform1i(glGetUniformLocation(program, "centers"), 2);
     }
 
-    void prepare(GLuint program, const float position[3], const float view[16], const float projection[16]) {
+    void prepare(GLuint program, const float position[3], const float view[16], const float projection[16], bool highlight) {
         glActiveTexture(GL_TEXTURE2);
         glBindTexture(GL_TEXTURE_1D, texture);
-        glUniform3fv(glGetUniformLocation(program, "highlight"), 1, position);
+        glUniform3fv(glGetUniformLocation(program, "position"), 1, position);
+        glUniform1i(glGetUniformLocation(program, "highlight"), highlight);
         glUniformMatrix4fv(glGetUniformLocation(program, "view"), 1, GL_FALSE, view);
         glUniformMatrix4fv(glGetUniformLocation(program, "projection"), 1, GL_FALSE, projection);
-        float modelMatrix[16];
-        mtxLoadIdentityf(modelMatrix);
-        mtxScalef(modelMatrix, 40.0f, 40.0f, 40.0f);
-        mtxRotatef(modelMatrix, 90.0f, 1.0f, 0.0f, 0.0f);
-        mtxTranslatef(modelMatrix, 0.0f, 1.25f, 0.0f);
-        glUniformMatrix4fv(glGetUniformLocation(program, "model"), 1, GL_FALSE, modelMatrix);
     }
 };

@@ -183,6 +183,7 @@ static void drawPost(size_t index, const float pose[16]);
 static cv::Ptr<cv::StereoSGBM> stereo;
 static cv::Mat depth;
 static float position[3] = {0};
+static int mouseX = 0, mouseY = 0;
 
 void drawInit() {
     const char *resourcesDir = arUtilGetResourcesDirectoryPath(
@@ -199,8 +200,8 @@ void drawInit() {
         mNormals.insert(mNormals.end(), {vertex.Normal.X, vertex.Normal.Y, vertex.Normal.Z});
     }
 
-    stereo = cv::StereoSGBM::create(0, 128, 21);
-    stereo->setMode(cv::StereoSGBM::MODE_HH);
+    stereo = cv::StereoSGBM::create(16, 128, 21);
+    // stereo->setMode(cv::StereoSGBM::MODE_HH);
     // stereo->setUniquenessRatio(10);
     // stereo->setSpeckleWindowSize(100);
     // stereo->setSpeckleRange(2);
@@ -309,7 +310,7 @@ void drawSetup(ARG_API drawAPI_in, bool rotate90_in, bool flipH_in, bool flipV_i
     return;
 }
 
-void drawUpdate(int width, int height, std::vector<unsigned char> frames[2]) {
+void drawUpdate(int width, int height, int contentWidth, int contentHeight, std::vector<unsigned char> frames[2]) {
     if (depth.elemSize() > 0) {
         return;
     }
@@ -323,12 +324,23 @@ void drawUpdate(int width, int height, std::vector<unsigned char> frames[2]) {
     stereo->compute(leftGray, rightGray, disparity);
     disparity.convertTo(disparity, CV_32F, 1.0);
 
-    // width / camera width * interocular distance * focal plane distance
-    // TODO: This is not quite right, it should be:
-    //        width / camera width * baseline distance * focal length
-    // disparity = float(width) / 0.036f * 0.095f * 1.95f / (disparity / 16.0f);
-    disparity = (disparity / 16.0f) / float(stereo->getNumDisparities());
-    depth = 0.508786f / disparity;
+    disparity = (disparity / 16.0f);
+    // float focal = 1024.0f / 36.0f * 50.0f;
+    // float focal = 1236.077344;
+    float focal = 1024.0f / 2.0f / tan(45.0f / 180.0f * M_PI / 2.0f);
+    float baseline = 0.055f;
+    // TODO: Investigate this magic 0.895 number
+    float QData[16] = {
+        -1.0f, 0.0f, 0.0f, 512.0f,
+        0.0f, 1.0f, 0.0f, -512.0f,
+        0.0f, 0.0f, 0.0f, focal,
+        0.0f, 0.0f, 0.895f * -1.0f / baseline, 0.0f
+    };
+    cv::Mat Q(4, 4, CV_32F, QData);
+    cv::reprojectImageTo3D(disparity, depth, Q);
+    // depth = focal * baseline / disparity;
+    // cv::Vec<float, 3> v = depth.at<cv::Vec<float, 3>>(y, x);
+    // printf("%f, %f, %f\n", v[0], v[1], v[2]);
 
     // float min = 1000.0f, max = -1000.0f;
     // for (int i = 0; i < width * height; i++) {
@@ -339,8 +351,17 @@ void drawUpdate(int width, int height, std::vector<unsigned char> frames[2]) {
 
     // printf("%f, %f\n", min, max);
 
-    // cv::imwrite("disparity.jpg", depth * 255.0f);
-    // done = true;
+    // cv::imwrite("disparity.jpg", disparity / float(stereo->getNumDisparities()) * 255.0f);
+}
+
+bool drawMouseMove(int x, int y) {
+    if (!highlight) {
+        return false;
+    }
+    mouseX = x;
+    mouseY = y;
+    position[0] = 0.0f;
+    return true;
 }
 
 void drawPrepare() {
@@ -467,7 +488,7 @@ void draw(size_t index) {
                 "in vec3 normal;\n"
                 "in vec3 position;\n"
                 "void main() {\n"
-                    "vec3 lightPos = (vec4(-50.0, 0.0, -80.0, 1.0)).xyz;\n"
+                    "vec3 lightPos = (vec4(-5.0, 0.0, -8.0, 1.0)).xyz;\n"
                     "vec3 lightDir = normalize(position - lightPos);\n"
                     "vec3 viewDir = normalize(position - cameraPos);\n "
                     "vec3 reflection = reflect(lightDir, normal);\n"
@@ -499,7 +520,7 @@ void draw(size_t index) {
                 "in vec3 normal;\n"
                 "in vec3 position;\n"
                 "void main() {\n"
-                    "vec3 lightPos = (vec4(-50.0, 0.0, -80.0, 1.0)).xyz;\n"
+                    "vec3 lightPos = (vec4(-5.0, 0.0, -12.0, 1.0)).xyz;\n"
                     "vec3 lightDir = normalize(position - lightPos);\n"
                     "vec3 viewDir = normalize(position - cameraPos);\n "
                     "vec3 reflection = reflect(lightDir, normal);\n"
@@ -550,7 +571,7 @@ static void drawModel(float pose[16]) {
 #if HAVE_GL
     if (drawAPI == ARG_API_GL) {
         glPushMatrix(); // Save world coordinate system.
-        glScalef(40.0f, 40.0f, 40.0f);
+        glScalef(0.05f, 0.05f, 0.05f);
         glRotatef(90.0f, 1.0f, 0.0f, 0.0f);
         glTranslatef(0.0f, 1.25f, 0.0f);
         glDisable(GL_TEXTURE_2D);
@@ -570,7 +591,7 @@ static void drawModel(float pose[16]) {
 #if HAVE_GLES2 || HAVE_GL3
     if (drawAPI == ARG_API_GLES2 || drawAPI == ARG_API_GL3) {
         mtxLoadIdentityf(modelMatrix);
-        mtxScalef(modelMatrix, 40.0f, 40.0f, 40.0f);
+        mtxScalef(modelMatrix, 0.05f, 0.05f, 0.05f);
         mtxRotatef(modelMatrix, 90.0f, 1.0f, 0.0f, 0.0f);
         mtxTranslatef(modelMatrix, 0.0f, 1.25f, 0.0f);
         glUniformMatrix4fv(uniforms[UNIFORM_VIEW_MATRIX], 1, GL_FALSE, pose);
@@ -748,56 +769,64 @@ static void drawPost(size_t index, const float pose[16]) {
     glBindTexture(GL_TEXTURE_2D, gFBOTextures[1]);
 
     if (highlight && position[0] == 0.0f) {
-        const int x = 575;
-        const int y = 395;
-        const float d = depth.at<float>(x, y);
-        printf("%f\n", d * 2.0f - 1.0f);
-        const float projPos[4] = { float(x) / 1024.0f * 2.0f - 1.0f, float(y) / 1024.0f * -2.0f + 1.0f, d, 1.0f };
-        // const float projPos[4] = { -0.5f, -0.5f, 1.00002f, 1.0f };
+        const int x = mouseX;
+        const int y = mouseY;
+        // const float d = depth.at<float>(y, x);
+        cv::Vec<float, 3> v = depth.at<cv::Vec<float, 3>>(y, x);
+        // printf("%f, %f, %f\n", v[0], v[1], v[2]);
 
-        float projInv[16];
-        invertMatrix(gProjection, projInv);
-        float viewPos[4];
-        transformVector(projPos, projInv, viewPos);
-        for (int i = 0; i < 4; i++) {
-            viewPos[i] /= viewPos[3];
-        }
+        // const float projPos[4] = { float(x) / 1024.0f * 2.0f - 1.0f, float(y) / 1024.0f * -2.0f + 1.0f, 1.0f, 1.0f };
+
+        // float projInv[16];
+        // invertMatrix(gProjection, projInv);
+        // float viewPos[4];
+        // transformVector(projPos, projInv, viewPos);
+        // for (int i = 0; i < 4; i++) {
+        //     viewPos[i] /= viewPos[3];
+        // }
+
+        float P[4] = {
+            v[0],
+            v[1],
+            v[2],
+            1.0f
+        };
 
         float viewInv[16];
         invertMatrix(pose, viewInv);
         float worldPos[4];
-        transformVector(viewPos, viewInv, worldPos);
+        transformVector(P, viewInv, worldPos);
 
         for (int i = 0; i < 3; i++) {
             position[i] = worldPos[i];
         }
 
-        printf("%f, %f, %f, %f\n", projPos[0], projPos[1], projPos[2], projPos[3]);
-        printf("%f, %f, %f, %f\n", viewPos[0], viewPos[1], viewPos[2], viewPos[3]);
+        // printf("%f, %f, %f, %f\n", projPos[0], projPos[1], projPos[2], projPos[3]);
+        // printf("%f, %f, %f, %f\n", viewPos[0], viewPos[1], viewPos[2], viewPos[3]);
+
+        printf("%f, %f, %f, %f\n", P[0], P[1], P[2], P[3]);
         printf("%f, %f, %f, %f\n", worldPos[0], worldPos[1], worldPos[2], worldPos[3]);
     }
 
+    // if (index == 0) {
+    //     float worldPos[4];
+    //     for (int i = 0; i < 3; i++) {
+    //         worldPos[i] = position[i];
+    //     }
+    //     float temp1[4];
+    //     transformVector(worldPos, pose, temp1);
+    //     float temp2[4];
+    //     transformVector(temp1, gProjection, temp2);
 
-    if (index == 0) {
-        float worldPos[4];
-        worldPos[3] = 1.0f;
-        for (int i = 0; i < 3; i++) {
-            worldPos[i] = position[i];
-        }
-        float temp1[4];
-        transformVector(worldPos, pose, temp1);
-        float temp2[4];
-        transformVector(temp1, gProjection, temp2);
+    //     for (int i = 0; i < 4; i++) {
+    //         temp2[i] /= temp2[3];
+    //     }
 
-        for (int i = 0; i < 4; i++) {
-            temp2[i] /= temp2[3];
-        }
+    //     printf("%f, %f, %f, %f\n", temp1[0], temp1[1], temp1[2], temp1[3]);
+    //     printf("%f, %f, %f, %f\n", temp2[0], temp2[1], temp2[2], temp2[3]);
+    // }
 
-        // printf("%f, %f, %f, %f\n", temp1[0], temp1[1], temp1[2], temp1[3]);
-        // printf("%f, %f, %f, %f\n", temp2[0], temp2[1], temp2[2], temp2[3]);
-    }
-
-    voronoi->prepare(postPrograms[4], position, pose, gProjection);
+    voronoi->prepare(postPrograms[4], position, pose, gProjection, highlight);
 
     glDrawArrays(GL_TRIANGLES, 0, 6);
 

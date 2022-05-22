@@ -103,7 +103,7 @@ struct marker {
   float height;
 };
 static const struct marker markers[] = { //{"hiro.patt", 80.0},
-    {"kanji.patt", 80.0}};
+    {"kanji.patt", 0.1}};
 static const int markerCount = (sizeof(markers) / sizeof(markers[0]));
 
 //
@@ -114,6 +114,7 @@ static void processCommandLineOptions(int argc, char *argv[]);
 static void usage(char *com);
 static void quit(int rc);
 static void reshape(int w, int h);
+static void drawFull();
 
 int main(int argc, char *argv[]) {
   processCommandLineOptions(argc, argv);
@@ -259,11 +260,6 @@ int main(int argc, char *argv[]) {
   //   0.0, 1.0, 0.0, 0.095,
   //   0.0, 0.0, 1.0, 0.095
   // };
-  // const double stereoParametersRaw[12] = {
-  //   1.0, 0.0, 0.0, 0.0,
-  //   0.0, 1.0, 0.0, 0.0,
-  //   0.0, 0.0, 1.0, 0.0,
-  // };
   // char stereoParameters[sizeof(stereoParametersRaw)];
   // for (int i = 0; i < 12; i++) {
   //   for (int j = 0; j < sizeof(double); j++) {
@@ -274,13 +270,10 @@ int main(int argc, char *argv[]) {
   // Start tracking.
   // arController->startRunningStereo(vconfl, cpara, NULL, 0, vconfr, cpara, NULL, 0, NULL, (const char*) stereoParameters, sizeof(stereoParameters));
   // const double cparaRaw[12] = {
-    // 1422.2222, 0.0, 512.0, 0.0,
-    // 0.0, 2133.3333, 512.0, 0.0,
-    // 0.0, 0.0, 1.0, 0.0
-    // 1431.8732, 397.3820, -276.9242, 692.5042,
-    // -17.1545, -309.4979, -1479.4517, 126.4498,
-    // 0.0199, 0.8512, -0.5244, 0.3413
-  //   0.9996, -0.0270, -0.0059, 0.3640,
+  //    1431.8732, 397.3820, -276.9242, 692.5042,
+  //   -17.1545, -309.4979, -1479.4517, 126.4498,
+  //    0.0199, 0.8512, -0.5244, 0.3413
+  //    0.9996, -0.0270, -0.0059, 0.3640,
   //   -0.0192, -0.5241, -0.8515, -0.0340,
   //    0.0199, 0.8512, -0.5244, 0.3413
   // };
@@ -301,6 +294,7 @@ int main(int argc, char *argv[]) {
   bool paused = true;
   bool firstFrame = true;
   int width, height;
+  int contentWidth, contentHeight;
 
   // Main loop.
   bool done = false;
@@ -321,6 +315,14 @@ int main(int argc, char *argv[]) {
           int w, h;
           SDL_GL_GetDrawableSize(gSDLWindow, &w, &h);
           reshape(w, h);
+        }
+      } else if (ev.type == SDL_MOUSEMOTION) {
+        const int x = int(float(ev.motion.x - viewport[0]) / float(contentWidth / 2.0f) * float(width));
+        const int y = int(float(ev.motion.y - viewport[1]) / float(contentHeight) * float(height));
+        if (x >= 0 && y >= 0 && x < width && y < height) {
+          if (drawMouseMove(x, y)) {
+            drawFull();
+          }
         }
       } else if (ev.type == SDL_KEYDOWN) {
         if (ev.key.keysym.sym == SDLK_d) {
@@ -383,7 +385,6 @@ int main(int argc, char *argv[]) {
 
         const float contentAspectRatio = float(width * 2) / float(height);
         const float contextAspectRatio = float(contextWidth) / float(contextHeight);
-        int contentWidth, contentHeight;
         if (contextAspectRatio < contentAspectRatio) {
           contentWidth = contextWidth;
           contentHeight = contentWidth / contentAspectRatio;
@@ -427,7 +428,7 @@ int main(int argc, char *argv[]) {
         arControllers[i]->updateTextureRGBA32(0, (uint32_t*) frames[i].data());
       }
 
-      drawUpdate(width, height, frames);
+      drawUpdate(width, height, contentWidth / 2, contentHeight, frames);
       // done = true;
 
       for (int i = 0; i <= 1; i++) {
@@ -446,35 +447,7 @@ int main(int argc, char *argv[]) {
         }
       }
 
-      SDL_GL_MakeCurrent(gSDLWindow, gSDLContext);
-      glClear(GL_COLOR_BUFFER_BIT);
-
-      for (int i = 0; i <= 1; i++) {
-        drawPrepare();
-
-        ARdouble projectionARD[16];
-        arControllers[i]->projectionMatrix(0, 0.1f, 1000.0f, projectionARD);
-        for (int j = 0; j < 16; j++) {
-          projection[j] = (float)projectionARD[j];
-        }
-// 2.416574, 0.000000, 0.000000, 0.000000,
-// 0.000000, 2.416574, 0.000000, 0.000000,
-// -0.000978, 0.000978, -1.000200, -1.000000,
-// 0.000000, 0.000000, -0.200020, 0.000000,
-
-        drawSetCamera(projection, NULL);
-
-        // Clear the context.
-        glClearColor(0.0, 0.0, 0.0, 1.0);
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
-        // Display the current video frame to the current OpenGL context.
-        arControllers[i]->drawVideo(0);
-
-        draw(i);
-      }
-
-      SDL_GL_SwapWindow(gSDLWindow);
+      drawFull();
     } // if (gotFrame)
   }   // while (!done)
 
@@ -482,6 +455,34 @@ int main(int argc, char *argv[]) {
 
   quit(0);
   return 0;
+}
+
+static void drawFull() {
+  SDL_GL_MakeCurrent(gSDLWindow, gSDLContext);
+  glClear(GL_COLOR_BUFFER_BIT);
+
+  for (int i = 0; i <= 1; i++) {
+    drawPrepare();
+
+    ARdouble projectionARD[16];
+    arControllers[i]->projectionMatrix(0, 0.1f, 100.0f, projectionARD);
+    for (int j = 0; j < 16; j++) {
+      projection[j] = (float)projectionARD[j];
+    }
+
+    drawSetCamera(projection, NULL);
+
+    // Clear the context.
+    glClearColor(0.0, 0.0, 0.0, 1.0);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    // Display the current video frame to the current OpenGL context.
+    arControllers[i]->drawVideo(0);
+
+    draw(i);
+  }
+
+  SDL_GL_SwapWindow(gSDLWindow);
 }
 
 static void processCommandLineOptions(int argc, char *argv[]) {
