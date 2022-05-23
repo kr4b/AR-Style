@@ -428,9 +428,6 @@ int main(int argc, char *argv[]) {
         arControllers[i]->updateTextureRGBA32(0, (uint32_t*) frames[i].data());
       }
 
-      drawUpdate(width, height, contentWidth / 2, contentHeight, frames);
-      // done = true;
-
       for (int i = 0; i <= 1; i++) {
         // Look for trackables, and draw on each found one.
         for (int j = 0; j < markerCount; j++) {
@@ -447,6 +444,16 @@ int main(int argc, char *argv[]) {
         }
       }
 
+      ARdouble projectionARD[16];
+      arControllers[0]->projectionMatrix(0, 0.1f, 100.0f, projectionARD);
+      for (int j = 0; j < 16; j++) {
+        projection[j] = (float)projectionARD[j];
+      }
+
+      drawSetCamera(projection, NULL);
+
+      drawUpdate(width, height, contentWidth / 2, contentHeight, frames);
+
       drawFull();
     } // if (gotFrame)
   }   // while (!done)
@@ -459,21 +466,13 @@ int main(int argc, char *argv[]) {
 
 static void drawFull() {
   SDL_GL_MakeCurrent(gSDLWindow, gSDLContext);
+  glClearColor(0.0, 0.0, 0.0, 1.0);
   glClear(GL_COLOR_BUFFER_BIT);
 
   for (int i = 0; i <= 1; i++) {
     drawPrepare();
 
-    ARdouble projectionARD[16];
-    arControllers[i]->projectionMatrix(0, 0.1f, 100.0f, projectionARD);
-    for (int j = 0; j < 16; j++) {
-      projection[j] = (float)projectionARD[j];
-    }
-
-    drawSetCamera(projection, NULL);
-
     // Clear the context.
-    glClearColor(0.0, 0.0, 0.0, 1.0);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     // Display the current video frame to the current OpenGL context.

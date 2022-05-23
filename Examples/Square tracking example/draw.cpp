@@ -50,6 +50,7 @@
 #include <opencv2/calib3d.hpp>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/imgcodecs.hpp>
+#include <opencv2/ximgproc/disparity_filter.hpp>
 
 #if HAVE_GL
 #  if ARX_TARGET_PLATFORM_MACOS
@@ -164,7 +165,7 @@ static bool flipH = false;
 static bool flipV = false;
 static bool visible = true;
 static bool stylize = true;
-static bool highlight = true;
+static bool highlight = false;
 
 static int32_t gViewport[4] = {0};
 static float gProjection[16];
@@ -176,12 +177,13 @@ static bool gModelVisbilities[DRAW_MODELS_MAX];
 static objl::Mesh model;
 static std::vector<float> mVertices;
 static std::vector<float> mNormals;
-static Voronoi* voronoi;
+static Voronoi* voronoi[2];
 
 static void drawModel(float pose[16]);
 static void drawPost(size_t index, const float pose[16]);
-static cv::Ptr<cv::StereoSGBM> stereo;
-static cv::Mat depth;
+static cv::Ptr<cv::StereoMatcher> stereoLeft, stereoRight;
+static cv::Ptr<cv::ximgproc::DisparityWLSFilter> wlsFilterLeft, wlsFilterRight;
+static cv::Mat leftDepth, rightDepth;
 static float position[3] = {0};
 static int mouseX = 0, mouseY = 0;
 
@@ -200,7 +202,11 @@ void drawInit() {
         mNormals.insert(mNormals.end(), {vertex.Normal.X, vertex.Normal.Y, vertex.Normal.Z});
     }
 
-    stereo = cv::StereoSGBM::create(16, 128, 21);
+    stereoLeft = cv::StereoSGBM::create(16, 128, 21);
+    wlsFilterLeft = cv::ximgproc::createDisparityWLSFilter(stereoLeft);
+    stereoRight = cv::ximgproc::createRightMatcher(stereoLeft);
+    wlsFilterRight = cv::ximgproc::createDisparityWLSFilter(stereoRight);
+
     // stereo->setMode(cv::StereoSGBM::MODE_HH);
     // stereo->setUniquenessRatio(10);
     // stereo->setSpeckleWindowSize(100);
@@ -275,7 +281,8 @@ void drawSetup(ARG_API drawAPI_in, bool rotate90_in, bool flipH_in, bool flipV_i
     flipH = flipH_in;
     flipV = flipV_in;
 
-    voronoi = new Voronoi(drawAPI, 80, 80, width, height);
+    voronoi[0] = new Voronoi(drawAPI, 80, 80, width, height);
+    voronoi[1] = new Voronoi(drawAPI, voronoi[0]);
 
 #if HAVE_GLES2 || HAVE_GL3
     glActiveTexture(GL_TEXTURE0);
@@ -311,36 +318,29 @@ void drawSetup(ARG_API drawAPI_in, bool rotate90_in, bool flipH_in, bool flipV_i
 }
 
 void drawUpdate(int width, int height, int contentWidth, int contentHeight, std::vector<unsigned char> frames[2]) {
-    if (depth.elemSize() > 0) {
-        return;
-    }
+    // if (depth.elemSize() > 0) {
+    //     return;
+    // }
     cv::Mat left(width, height, CV_8UC4, frames[0].data());
     cv::Mat right(width, height, CV_8UC4, frames[1].data());
-    cv::Mat leftGray, rightGray, disparity;
+    cv::Mat leftGray, rightGray, leftDisparity, rightDisparity, leftFilteredDisparity, rightFilteredDisparity;
 
-    cv::cvtColor(left, leftGray, cv::COLOR_RGBA2GRAY);
-    cv::cvtColor(right, rightGray, cv::COLOR_RGBA2GRAY);
+    // cv::resize(left, leftGray)
+    cv::cvtColor(left, left, cv::COLOR_RGBA2RGB);
+    cv::cvtColor(right, right, cv::COLOR_RGBA2RGB);
+    cv::cvtColor(left, leftGray, cv::COLOR_RGB2GRAY);
+    cv::cvtColor(right, rightGray, cv::COLOR_RGB2GRAY);
 
-    stereo->compute(leftGray, rightGray, disparity);
-    disparity.convertTo(disparity, CV_32F, 1.0);
+    stereoLeft->compute(leftGray, rightGray, leftDisparity);
+    stereoRight->compute(rightGray, leftGray, rightDisparity);
+    leftDisparity.convertTo(leftDisparity, CV_32F, 1.0);
+    rightDisparity.convertTo(rightDisparity, CV_32F, 1.0);
 
-    disparity = (disparity / 16.0f);
-    // float focal = 1024.0f / 36.0f * 50.0f;
-    // float focal = 1236.077344;
-    float focal = 1024.0f / 2.0f / tan(45.0f / 180.0f * M_PI / 2.0f);
-    float baseline = 0.055f;
-    // TODO: Investigate this magic 0.895 number
-    float QData[16] = {
-        -1.0f, 0.0f, 0.0f, 512.0f,
-        0.0f, 1.0f, 0.0f, -512.0f,
-        0.0f, 0.0f, 0.0f, focal,
-        0.0f, 0.0f, 0.895f * -1.0f / baseline, 0.0f
-    };
-    cv::Mat Q(4, 4, CV_32F, QData);
-    cv::reprojectImageTo3D(disparity, depth, Q);
-    // depth = focal * baseline / disparity;
-    // cv::Vec<float, 3> v = depth.at<cv::Vec<float, 3>>(y, x);
-    // printf("%f, %f, %f\n", v[0], v[1], v[2]);
+    leftDisparity = (leftDisparity / 16.0f);
+    rightDisparity = (rightDisparity / 16.0f);
+
+    wlsFilterLeft->filter(leftDisparity, left, leftFilteredDisparity, rightDisparity);
+    wlsFilterRight->filter(rightDisparity, right, rightFilteredDisparity, leftDisparity);
 
     // float min = 1000.0f, max = -1000.0f;
     // for (int i = 0; i < width * height; i++) {
@@ -351,7 +351,29 @@ void drawUpdate(int width, int height, int contentWidth, int contentHeight, std:
 
     // printf("%f, %f\n", min, max);
 
-    // cv::imwrite("disparity.jpg", disparity / float(stereo->getNumDisparities()) * 255.0f);
+    // cv::imwrite("disparityFL.jpg", leftFilteredDisparity);
+    // cv::imwrite("disparityFR.jpg", -rightFilteredDisparity);
+    // cv::imwrite("disparityL.jpg", leftDisparity);
+    // cv::imwrite("disparityR.jpg", -rightDisparity);
+
+    // float focal = 1024.0f / 36.0f * 50.0f;
+    // float focal = 1236.077344;
+    float focal = 1024.0f / 2.0f / tan(45.0f / 180.0f * M_PI / 2.0f);
+    float baseline = 0.055f;
+    // TODO: Investigate this magic 0.895 number
+    float QData[16] = {
+        -1.0f, 0.0f, 0.0f, float(width) / 2.0f,
+        0.0f, 1.0f, 0.0f, -float(height) / 2.0f,
+        0.0f, 0.0f, 0.0f, focal,
+        0.0f, 0.0f, 0.895f * -1.0f / baseline, 0.0f
+    };
+    cv::Mat Q(4, 4, CV_32F, QData);
+    cv::reprojectImageTo3D(leftFilteredDisparity, leftDepth, Q);
+    cv::reprojectImageTo3D(-rightFilteredDisparity, rightDepth, Q);
+    // depth = focal * baseline / disparity;
+
+    voronoi[0]->updateDepth(leftDepth, width, height, &(gModelPoses[0][0]), gProjection);
+    voronoi[1]->updateDepth(rightDepth, width, height, &(gModelPoses[1][0]), gProjection);
 }
 
 bool drawMouseMove(int x, int y) {
@@ -397,7 +419,7 @@ void drawCleanup() {
     }
 #endif // HAVE_GLES2 || HAVE_GL3
     for (int i = 0; i < DRAW_MODELS_MAX; i++) gModelLoaded[i] = false;
-    delete voronoi;
+    for (int i = 0; i <= 1; i++) delete voronoi[i];
 
     return;
 }
@@ -665,8 +687,9 @@ static void drawPost(size_t index, const float pose[16]) {
 
     glViewport(0, 0, gViewport[2] / 2, gViewport[3]);
     glBindFramebuffer(GL_FRAMEBUFFER, gFBOs[1]);
+    glClear(GL_COLOR_BUFFER_BIT);
 
-    voronoi->drawPattern();
+    voronoi[index]->drawPattern();
 
 #if HAVE_GLES2 || HAVE_GL3
     if (drawAPI == ARG_API_GLES2 || drawAPI == ARG_API_GL3) {
@@ -714,7 +737,7 @@ static void drawPost(size_t index, const float pose[16]) {
                 glBindAttribLocation(postPrograms[i], ATTRIBUTE_NORMAL, "texCoord");
             }
 
-            voronoi->load(postPrograms[4]);
+            voronoi[index]->load(postPrograms[4]);
 
             uniforms[UNIFORM_WIDTH] = glGetUniformLocation(postPrograms[2], "width");
             uniforms[UNIFORM_HEIGHT] = glGetUniformLocation(postPrograms[2], "height");
@@ -771,8 +794,9 @@ static void drawPost(size_t index, const float pose[16]) {
     if (highlight && position[0] == 0.0f) {
         const int x = mouseX;
         const int y = mouseY;
+        // printf("%d, %d\n", x, y);
         // const float d = depth.at<float>(y, x);
-        cv::Vec<float, 3> v = depth.at<cv::Vec<float, 3>>(y, x);
+        cv::Vec<float, 3> v = leftDepth.at<cv::Vec<float, 3>>(y, x);
         // printf("%f, %f, %f\n", v[0], v[1], v[2]);
 
         // const float projPos[4] = { float(x) / 1024.0f * 2.0f - 1.0f, float(y) / 1024.0f * -2.0f + 1.0f, 1.0f, 1.0f };
@@ -826,7 +850,7 @@ static void drawPost(size_t index, const float pose[16]) {
     //     printf("%f, %f, %f, %f\n", temp2[0], temp2[1], temp2[2], temp2[3]);
     // }
 
-    voronoi->prepare(postPrograms[4], position, pose, gProjection, highlight);
+    voronoi[index]->prepare(postPrograms[4], position, pose, gProjection, highlight);
 
     glDrawArrays(GL_TRIANGLES, 0, 6);
 

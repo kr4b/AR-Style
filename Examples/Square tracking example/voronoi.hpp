@@ -6,6 +6,8 @@
 #include <ARX/ARController.h>
 #include <ARX/ARG/mtx.h>
 
+#include <opencv2/core.hpp>
+
 #include "OBJ_Loader.h"
 #include "utils.hpp"
 
@@ -54,6 +56,9 @@ private:
     std::vector<float> vertices;
     std::vector<float> colors;
     std::vector<float> offsets;
+    std::vector<float> worldPositions;
+
+    const Voronoi* other;
 
     void loadProgram(ARG_API drawAPI) {
         const char vertShaderStringGLES2[] =
@@ -104,6 +109,11 @@ private:
     }
 
     void loadGL(ARG_API drawAPI) {
+        const float scale = 4.0f / float(std::max(m, n));
+        mtxLoadIdentityf(transform);
+        mtxRotatef(transform, -90.0f, 1.0f, 0.0f, 0.0f);
+        mtxScalef(transform, scale, scale, scale);
+
         loadProgram(drawAPI);
 
         const char *resourcesDir = arUtilGetResourcesDirectoryPath(
@@ -121,7 +131,7 @@ private:
         glGenTextures(1, &texture);
 
         glBindTexture(GL_TEXTURE_1D, texture);
-        glTexImage1D(GL_TEXTURE_1D, 0, GL_RG32F, m * n, 0, GL_RG, GL_FLOAT, offsets.data());
+        glTexImage1D(GL_TEXTURE_1D, 0, GL_RG32F, m * n, 0, GL_RG, GL_FLOAT, NULL);
         glTexParameteri(GL_TEXTURE_1D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_1D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         glBindTexture(GL_TEXTURE_1D, 0);
@@ -140,17 +150,16 @@ private:
             glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, modelIBO);
             glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(unsigned int) * model.Indices.size(), model.Indices.data(), GL_STATIC_DRAW);
 
-            // Indexing
             glGenBuffers(1, &modelCBO);
             glBindBuffer(GL_ARRAY_BUFFER, modelCBO);
-            glBufferData(GL_ARRAY_BUFFER, sizeof(float) * colors.size(), colors.data(), GL_STATIC_DRAW);
+            glBufferData(GL_ARRAY_BUFFER, sizeof(float) * m * n * 3, colors.data(), GL_STATIC_DRAW);
             glEnableVertexAttribArray(1);
             glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 0, NULL);
             glVertexAttribDivisor(1, 1);
 
             glGenBuffers(1, &modelO2BO);
             glBindBuffer(GL_ARRAY_BUFFER, modelO2BO);
-            glBufferData(GL_ARRAY_BUFFER, sizeof(float) * offsets.size(), offsets.data(), GL_STATIC_DRAW);
+            glBufferData(GL_ARRAY_BUFFER, sizeof(float) * m * n * 2, NULL, GL_STATIC_DRAW);
             glEnableVertexAttribArray(2);
             glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 0, NULL);
             glVertexAttribDivisor(2, 1);
@@ -168,11 +177,10 @@ public:
     const size_t m, n;
     // std::vector<std::pair<float, float>> centers;
 
-    Voronoi(ARG_API drawAPI, size_t m, size_t n, int width, int height) : m(m), n(n) {
+    Voronoi(ARG_API drawAPI, size_t m, size_t n, int width, int height) : m(m), n(n), other(NULL) {
         // centers.resize(m * n);
         colors.resize(m * n * 3);
         offsets.resize(m * n * 2);
-        const float scale = 4.0f / float(std::max(m, n));
 
         for (size_t i = 0; i < n; i++) {
             for (size_t j = 0; j < m; j++) {
@@ -181,18 +189,89 @@ public:
                 const size_t index = i * m + j;
                 // centers[index] = std::make_pair(x, y);
                 offsets[index * 2 + 0] = x / float(width);
-                offsets[index * 2 + 1] = 1.0 - y / float(height);
+                offsets[index * 2 + 1] = (1.0f - y / float(height));
                 colors[index * 3 + 0] = float(index / (256 * 256)) / 255.0f;
                 colors[index * 3 + 1] = float((index % (256 * 256)) / 256) / 255.0f;
                 colors[index * 3 + 2] = float(index % 256) / 255.0f;
             }
         }
 
-        mtxLoadIdentityf(transform);
-        mtxRotatef(transform, -90.0f, 1.0f, 0.0f, 0.0f);
-        mtxScalef(transform, scale, scale, scale);
         loadGL(drawAPI);
-        // updateTexture();
+    }
+
+    Voronoi(ARG_API drawAPI, const Voronoi* other) : m(other->m), n(other->n), other(other) {
+        colors = other->colors;
+        offsets.resize(other->offsets.size());
+
+        loadGL(drawAPI);
+    }
+
+    void updateDepth(const cv::Mat& depth, int width, int height, const float view[16], const float projection[16]) {
+        float viewInv[16];
+        invertMatrix(view, viewInv);
+        // float projInv[16];
+        // invertMatrix(projection, projInv);
+
+        if (worldPositions.empty()) {
+            if (other) {
+                worldPositions = other->worldPositions;
+            } else {
+                worldPositions.resize(m * n * 3);
+                for (size_t i = 0; i < n; i++) {
+                    for (size_t j = 0; j < m; j++) {
+                        const size_t index = i * m + j;
+                        const float x = offsets[index * 2 + 0] * float(width);
+                        const float y = (1.0f - offsets[index * 2 + 1]) * float(height);
+                        const cv::Vec<float, 3> v = depth.at<cv::Vec<float, 3>>(int(y), int(x));
+                        const float P[4] = {
+                            v[0],
+                            v[1],
+                            v[2],
+                            1.0f
+                        };
+                        float worldPos[4];
+                        transformVector(P, viewInv, worldPos);
+                        worldPositions[index * 3 + 0] = worldPos[0];
+                        worldPositions[index * 3 + 1] = worldPos[1];
+                        worldPositions[index * 3 + 2] = worldPos[2];
+                    }
+                }
+            }
+        }
+
+        for (size_t i = 0; i < n; i++) {
+            for (size_t j = 0; j < m; j++) {
+                const size_t index = i * m + j;
+                const float worldPos[4] = {
+                    worldPositions[index * 3 + 0],
+                    worldPositions[index * 3 + 1],
+                    worldPositions[index * 3 + 2],
+                    1.0f,
+                };
+                float viewPos[4];
+                transformVector(worldPos, view, viewPos);
+                float imagePos[4];
+                transformVector(viewPos, projection, imagePos);
+
+                for (int i = 0; i < 4; i++) {
+                    imagePos[i] /= imagePos[3];
+                }
+
+                const float ix = (imagePos[0] + 1.0f) / 2.0f;
+                const float iy = (imagePos[1] + 1.0f) / 2.0f;
+                const float x = ix * float(width);
+                const float y = (1.0f - iy) * float(height);
+                const cv::Vec<float, 3> v = depth.at<cv::Vec<float, 3>>(int(y), int(x));
+                // TODO: Determine required accuracy for depth comparison
+                // if (abs(v[2] - viewPos[2]) > LAMBDA)
+                offsets[index * 2 + 0] = ix;
+                offsets[index * 2 + 1] = iy;
+            }
+        }
+
+        glBindBuffer(GL_ARRAY_BUFFER, modelO2BO);
+        glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(float) * m * n * 2, offsets.data());
+        updateTexture();
     }
 
     void drawPattern() {
@@ -209,7 +288,7 @@ public:
 #else
         glBindVertexArray(modelVAO);
 #endif
-        glDrawArraysInstanced(GL_TRIANGLES, 0, model.Indices.size(), offsets.size() / 2);
+        glDrawArraysInstanced(GL_TRIANGLES, 0, model.Indices.size(), m * n);
 #if HAVE_GL3
         glBindVertexArray(0);
 #endif

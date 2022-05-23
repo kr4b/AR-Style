@@ -22,8 +22,13 @@ void main() {
             fragColor = vec4(texture(frame, vTexCoord).xyz, 1.0);
         } else {
             vec3 color = texture(pattern, vTexCoord).xyz * 255.0;
-            int index = int(color.x) * 256 * 256 + int(color.y) * 256 + int(color.z);
-            fragColor = vec4(texture(frame, texelFetch(centers, index, 0).xy).xyz, 1.0);
+            if (color == vec3(0.0)) {
+                fragColor = vec4(1.0, 0.0, 0.0, 1.0);
+                // fragColor = texture(frame, vTexCoord);
+            } else {
+                int index = int(color.x) * 256 * 256 + int(color.y) * 256 + int(color.z);
+                fragColor = vec4(texture(frame, texelFetch(centers, index, 0).xy).xyz, 1.0);
+            }
         }
     }
 }
