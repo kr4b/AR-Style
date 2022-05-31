@@ -48,6 +48,7 @@
 #endif
 #endif
 #include <string>
+#include <chrono>
 
 #include <ARX/ARController.h>
 #include <ARX/ARUtil/time.h>
@@ -114,7 +115,7 @@ static void processCommandLineOptions(int argc, char *argv[]);
 static void usage(char *com);
 static void quit(int rc);
 static void reshape(int w, int h);
-static void drawFull();
+static void drawFull(int width, int height, int contentWidth, int contentHeight);
 
 int main(int argc, char *argv[]) {
   processCommandLineOptions(argc, argv);
@@ -298,7 +299,12 @@ int main(int argc, char *argv[]) {
 
   // Main loop.
   bool done = false;
+  auto start = std::chrono::system_clock::now();
   while (!done) {
+    // auto now = std::chrono::system_clock::now();
+    // auto elapsed = now - start;
+    // printf("Elapsed: %d\n", std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count());
+    // start = now;
 
     SDL_Event ev;
     while (SDL_PollEvent(&ev)) {
@@ -321,7 +327,7 @@ int main(int argc, char *argv[]) {
         const int y = int(float(ev.motion.y - viewport[1]) / float(contentHeight) * float(height));
         if (x >= 0 && y >= 0 && x < width && y < height) {
           if (drawMouseMove(x, y)) {
-            drawFull();
+            drawFull(width, height, contentWidth, contentHeight);
           }
         }
       } else if (ev.type == SDL_KEYDOWN) {
@@ -454,7 +460,7 @@ int main(int argc, char *argv[]) {
 
       drawUpdate(width, height, contentWidth / 2, contentHeight, frames);
 
-      drawFull();
+      drawFull(width, height, contentWidth, contentHeight);
     } // if (gotFrame)
   }   // while (!done)
 
@@ -464,10 +470,10 @@ int main(int argc, char *argv[]) {
   return 0;
 }
 
-static void drawFull() {
+static void drawFull(int width, int height, int contentWidth, int contentHeight) {
   SDL_GL_MakeCurrent(gSDLWindow, gSDLContext);
-  glClearColor(0.0, 0.0, 0.0, 1.0);
-  glClear(GL_COLOR_BUFFER_BIT);
+  glClearColor(0.0, 0.0, 0.0, 0.0);
+  glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
   for (int i = 0; i <= 1; i++) {
     drawPrepare();
@@ -478,7 +484,7 @@ static void drawFull() {
     // Display the current video frame to the current OpenGL context.
     arControllers[i]->drawVideo(0);
 
-    draw(i);
+    draw(i, width, height, contentWidth / 2, contentHeight);
   }
 
   SDL_GL_SwapWindow(gSDLWindow);

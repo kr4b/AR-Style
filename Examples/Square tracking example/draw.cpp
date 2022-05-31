@@ -101,8 +101,9 @@ enum {
     ATTRIBUTE_NORMAL,
     ATTRIBUTE_COUNT
 };
-static GLint uniforms[UNIFORM_COUNT] = {0};
+static GLint uniforms[2][UNIFORM_COUNT] = {0};
 static GLuint program = 0;
+static GLuint depthProgram = 0;
 static GLuint postPrograms[PROGRAM_COUNT] = {0};
 
 #if HAVE_GL3
@@ -113,8 +114,8 @@ static GLuint gModelIBO = 0;
 static GLuint gQuadVAO = 0;
 static GLuint gQuadVBOs[2] = {0};
 
-static GLuint gFBOs[2] = {0};
-static GLuint gFBOTextures[2] = {0};
+static GLuint gFBOs[3] = {0};
+static GLuint gFBOTextures[3] = {0};
 static GLuint gRBOs[2] = {0};
 
 	#if defined(_WIN32)
@@ -178,9 +179,11 @@ static objl::Mesh model;
 static std::vector<float> mVertices;
 static std::vector<float> mNormals;
 static Voronoi* voronoi[2];
+static std::vector<cv::Vec3f> worldPositions[2];
+static std::vector<cv::Vec3b> colors[2];
 
-static void drawModel(float pose[16]);
-static void drawPost(size_t index, const float pose[16]);
+static void drawModel(float pose[16], size_t uniform_index);
+static void drawPost(size_t index, const float pose[16], const std::vector<float>& modelDepth, int width, int height, int contentWidth, int contentHeight);
 static cv::Ptr<cv::StereoMatcher> stereoLeft, stereoRight;
 static cv::Ptr<cv::ximgproc::DisparityWLSFilter> wlsFilterLeft, wlsFilterRight;
 static cv::Mat leftDepth, rightDepth;
@@ -202,7 +205,7 @@ void drawInit() {
         mNormals.insert(mNormals.end(), {vertex.Normal.X, vertex.Normal.Y, vertex.Normal.Z});
     }
 
-    stereoLeft = cv::StereoSGBM::create(16, 128, 21);
+    stereoLeft = cv::StereoSGBM::create(0, 64, 9);
     wlsFilterLeft = cv::ximgproc::createDisparityWLSFilter(stereoLeft);
     stereoRight = cv::ximgproc::createRightMatcher(stereoLeft);
     wlsFilterRight = cv::ximgproc::createDisparityWLSFilter(stereoRight);
@@ -283,21 +286,22 @@ void drawSetup(ARG_API drawAPI_in, bool rotate90_in, bool flipH_in, bool flipV_i
 
     voronoi[0] = new Voronoi(drawAPI, 80, 80, width, height);
     voronoi[1] = new Voronoi(drawAPI, voronoi[0]);
+    // voronoi[1] = new Voronoi(drawAPI, 80, 80, width, height);
 
 #if HAVE_GLES2 || HAVE_GL3
     glActiveTexture(GL_TEXTURE0);
     // Create framebuffers
-    glGenFramebuffers(2, gFBOs);
+    glGenFramebuffers(3, gFBOs);
 
     // Create framebuffer textures
-    glGenTextures(2, gFBOTextures);
+    glGenTextures(3, gFBOTextures);
 
     // Create render buffers
     glGenRenderbuffers(2, gRBOs);
 
     for (int j = 0; j <= 1; j++) {
         glBindTexture(GL_TEXTURE_2D, gFBOTextures[j]);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
@@ -309,6 +313,14 @@ void drawSetup(ARG_API drawAPI_in, bool rotate90_in, bool flipH_in, bool flipV_i
         glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, gRBOs[j]);
     }
 
+    glBindTexture(GL_TEXTURE_2D, gFBOTextures[2]);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, width, height, 0, GL_RGBA, GL_FLOAT, NULL);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+    glBindFramebuffer(GL_FRAMEBUFFER, gFBOs[2]);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, gFBOTextures[2], 0);
+
     glBindTexture(GL_TEXTURE_2D, 0);
     glBindRenderbuffer(GL_RENDERBUFFER, 0);
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -318,6 +330,7 @@ void drawSetup(ARG_API drawAPI_in, bool rotate90_in, bool flipH_in, bool flipV_i
 }
 
 void drawUpdate(int width, int height, int contentWidth, int contentHeight, std::vector<unsigned char> frames[2]) {
+    // auto start = std::chrono::system_clock::now();
     // if (depth.elemSize() > 0) {
     //     return;
     // }
@@ -330,6 +343,8 @@ void drawUpdate(int width, int height, int contentWidth, int contentHeight, std:
     cv::cvtColor(right, right, cv::COLOR_RGBA2RGB);
     cv::cvtColor(left, leftGray, cv::COLOR_RGB2GRAY);
     cv::cvtColor(right, rightGray, cv::COLOR_RGB2GRAY);
+    cv::resize(leftGray, leftGray, cv::Size(), 0.5, 0.5, cv::INTER_LINEAR_EXACT);
+    cv::resize(rightGray, rightGray, cv::Size(), 0.5, 0.5, cv::INTER_LINEAR_EXACT);
 
     stereoLeft->compute(leftGray, rightGray, leftDisparity);
     stereoRight->compute(rightGray, leftGray, rightDisparity);
@@ -351,8 +366,8 @@ void drawUpdate(int width, int height, int contentWidth, int contentHeight, std:
 
     // printf("%f, %f\n", min, max);
 
-    // cv::imwrite("disparityFL.jpg", leftFilteredDisparity);
-    // cv::imwrite("disparityFR.jpg", -rightFilteredDisparity);
+    cv::imwrite("disparityFL.jpg", leftFilteredDisparity);
+    cv::imwrite("disparityFR.jpg", -rightFilteredDisparity);
     // cv::imwrite("disparityL.jpg", leftDisparity);
     // cv::imwrite("disparityR.jpg", -rightDisparity);
 
@@ -371,9 +386,9 @@ void drawUpdate(int width, int height, int contentWidth, int contentHeight, std:
     cv::reprojectImageTo3D(leftFilteredDisparity, leftDepth, Q);
     cv::reprojectImageTo3D(-rightFilteredDisparity, rightDepth, Q);
     // depth = focal * baseline / disparity;
-
-    voronoi[0]->updateDepth(leftDepth, width, height, &(gModelPoses[0][0]), gProjection);
-    voronoi[1]->updateDepth(rightDepth, width, height, &(gModelPoses[1][0]), gProjection);
+    // auto now = std::chrono::system_clock::now();
+    // auto elapsed = now - start;
+    // printf("Disparity: %d\n", std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count());
 }
 
 bool drawMouseMove(int x, int y) {
@@ -469,8 +484,8 @@ void drawSetModel(int modelIndex, bool visible, float pose[16]) {
     if (visible) mtxLoadMatrixf(&(gModelPoses[modelIndex][0]), pose);
 }
 
-void draw(size_t index) {
-    glViewport(0, 0, gViewport[2] / 2, gViewport[3]);
+void draw(size_t index, int width, int height, int contentWidth, int contentHeight) {
+    glViewport(0, 0, contentWidth, contentHeight);
 
 #if HAVE_GL
     if (drawAPI == ARG_API_GL) {
@@ -558,33 +573,92 @@ void draw(size_t index) {
             glBindAttribLocation(program, ATTRIBUTE_NORMAL, "vNormal");
 
             // Retrieve linked uniform locations.
-            uniforms[UNIFORM_VIEW_MATRIX] = glGetUniformLocation(program, "view");
-            uniforms[UNIFORM_MODEL_MATRIX] = glGetUniformLocation(program, "model");
-            uniforms[UNIFORM_PROJECTION_MATRIX] = glGetUniformLocation(program, "projection");
-            uniforms[UNIFORM_DIFFUSE_COLOR] = glGetUniformLocation(program, "diffuseColor");
-            uniforms[UNIFORM_CAMERA_POSITION] = glGetUniformLocation(program, "cameraPos");
+            uniforms[0][UNIFORM_VIEW_MATRIX] = glGetUniformLocation(program, "view");
+            uniforms[0][UNIFORM_MODEL_MATRIX] = glGetUniformLocation(program, "model");
+            uniforms[0][UNIFORM_PROJECTION_MATRIX] = glGetUniformLocation(program, "projection");
+            uniforms[0][UNIFORM_DIFFUSE_COLOR] = glGetUniformLocation(program, "diffuseColor");
+            uniforms[0][UNIFORM_CAMERA_POSITION] = glGetUniformLocation(program, "cameraPos");
         }
-        glUseProgram(program);
+
+        if (!depthProgram) {
+            const char vertShaderStringGLES2[] =
+                "attribute vec3 position;\n"
+                "uniform mat4 model;\n"
+                "uniform mat4 view;\n"
+                "uniform mat4 projection;\n"
+                "out vec3 position;\n"
+                "void main() {\n"
+                    "vec4 modelPosition = view * model * vec4(vPosition, 1.0);\n"
+                    "gl_Position = projection * modelPosition;\n"
+                    "position = modelPosition.xyz;\n"
+                "}\n";
+            const char fragShaderStringGLES2[] =
+                "#ifdef GL_ES\n"
+                "precision mediump float;\n"
+                "#endif\n"
+                "in vec3 position;\n"
+                "void main() {\n"
+                    "gl_FragColor = vec4(position, 1.0);\n"
+                "}\n";
+            const char vertShaderStringGL3[] =
+                "#version 150\n"
+                "in vec3 vPosition;\n"
+                "uniform mat4 model;\n"
+                "uniform mat4 view;\n"
+                "uniform mat4 projection;\n"
+                "out vec3 position;\n"
+                "void main() {\n"
+                    "vec4 modelPosition = view * model * vec4(vPosition, 1.0);\n"
+                    "gl_Position = projection * modelPosition;\n"
+                    "position = modelPosition.xyz;\n"
+                "}\n";
+            const char fragShaderStringGL3[] =
+                "#version 150\n"
+                "out vec4 FragColor;\n"
+                "in vec3 position;\n"
+                "void main() {\n"
+                    "FragColor = vec4(position, 1.0);\n"
+                "}\n";
+
+            depthProgram =
+                loadShaderProgram(NULL, drawAPI == ARG_API_GL3 ? vertShaderStringGL3 : vertShaderStringGLES2, NULL, drawAPI == ARG_API_GL3 ? fragShaderStringGL3 : fragShaderStringGLES2);
+
+            glBindAttribLocation(depthProgram, ATTRIBUTE_VERTEX, "vPosition");
+
+            // Retrieve linked uniform locations.
+            uniforms[1][UNIFORM_VIEW_MATRIX] = glGetUniformLocation(depthProgram, "view");
+            uniforms[1][UNIFORM_MODEL_MATRIX] = glGetUniformLocation(depthProgram, "model");
+            uniforms[1][UNIFORM_PROJECTION_MATRIX] = glGetUniformLocation(depthProgram, "projection");
+        }
     }
 #endif // HAVE_GLES2 || HAVE_GL3
 
     glEnable(GL_DEPTH_TEST);
 
     size_t poseIndex = 0;
+    std::vector<float> modelDepth(contentWidth * contentHeight * 4);
     if (visible) {
         for (int i = 0; i < DRAW_MODELS_MAX; i++) {
             if (i == index && gModelLoaded[i] && gModelVisbilities[i]) {
-                drawModel(&(gModelPoses[i][0]));
+                glUseProgram(program);
+                drawModel(&(gModelPoses[i][0]), 0);
+
+                glUseProgram(depthProgram);
+                glBindFramebuffer(GL_FRAMEBUFFER, gFBOs[2]);
+                drawModel(&(gModelPoses[i][0]), 1);
+                glReadPixels(0, 0, contentWidth, contentHeight, GL_RGBA, GL_FLOAT, modelDepth.data());
+
                 poseIndex = i;
+                break;
             }
         }
     }
 
-    drawPost(index, &(gModelPoses[poseIndex][0]));
+    drawPost(index, &(gModelPoses[poseIndex][0]), modelDepth, width, height, contentWidth, contentHeight);
 }
 
 // Something to look at, draw a rotating colour cube.
-static void drawModel(float pose[16]) {
+static void drawModel(float pose[16], size_t uniform_index) {
     int i;
 #if HAVE_GLES2 || HAVE_GL3
     float modelMatrix[16];
@@ -616,13 +690,13 @@ static void drawModel(float pose[16]) {
         mtxScalef(modelMatrix, 0.05f, 0.05f, 0.05f);
         mtxRotatef(modelMatrix, 90.0f, 1.0f, 0.0f, 0.0f);
         mtxTranslatef(modelMatrix, 0.0f, 1.25f, 0.0f);
-        glUniformMatrix4fv(uniforms[UNIFORM_VIEW_MATRIX], 1, GL_FALSE, pose);
-        glUniformMatrix4fv(uniforms[UNIFORM_MODEL_MATRIX], 1, GL_FALSE, modelMatrix);
-        glUniformMatrix4fv(uniforms[UNIFORM_PROJECTION_MATRIX], 1, GL_FALSE, gProjection);
-        glUniform3f(uniforms[UNIFORM_DIFFUSE_COLOR], model.MeshMaterial.Kd.X, model.MeshMaterial.Kd.Y, model.MeshMaterial.Kd.Z);
+        glUniformMatrix4fv(uniforms[uniform_index][UNIFORM_VIEW_MATRIX], 1, GL_FALSE, pose);
+        glUniformMatrix4fv(uniforms[uniform_index][UNIFORM_MODEL_MATRIX], 1, GL_FALSE, modelMatrix);
+        glUniformMatrix4fv(uniforms[uniform_index][UNIFORM_PROJECTION_MATRIX], 1, GL_FALSE, gProjection);
+        glUniform3f(uniforms[uniform_index][UNIFORM_DIFFUSE_COLOR], model.MeshMaterial.Kd.X, model.MeshMaterial.Kd.Y, model.MeshMaterial.Kd.Z);
         float viewInv[16];
         invertMatrix(pose, viewInv);
-        glUniform3f(uniforms[UNIFORM_CAMERA_POSITION], viewInv[12], viewInv[13], viewInv[14]);
+        glUniform3f(uniforms[uniform_index][UNIFORM_CAMERA_POSITION], viewInv[12], viewInv[13], viewInv[14]);
 
 #  if HAVE_GLES2
         if (drawAPI == ARG_API_GLES2) {
@@ -677,19 +751,13 @@ static void drawModel(float pose[16]) {
 #endif
 }
 
-static void drawPost(size_t index, const float pose[16]) {
+static void drawPost(size_t index, const float pose[16], const std::vector<float>& modelDepth, int width, int height, int contentWidth, int contentHeight) {
     const GLfloat vertices [6][2] = {
         {-1.0f, -1.0f}, {1.0f, 1.0f}, {-1.0f, 1.0f},
         {-1.0f, -1.0f}, {1.0f, -1.0f}, {1.0f, 1.0f} };
     const GLfloat texCoords [6][2] = {
         {0.0f, 0.0f}, {1.0f, 1.0f}, {0.0f, 1.0f},
         {0.0f, 0.0f}, {1.0f, 0.0f}, {1.0f, 1.0f} };
-
-    glViewport(0, 0, gViewport[2] / 2, gViewport[3]);
-    glBindFramebuffer(GL_FRAMEBUFFER, gFBOs[1]);
-    glClear(GL_COLOR_BUFFER_BIT);
-
-    voronoi[index]->drawPattern();
 
 #if HAVE_GLES2 || HAVE_GL3
     if (drawAPI == ARG_API_GLES2 || drawAPI == ARG_API_GL3) {
@@ -737,10 +805,10 @@ static void drawPost(size_t index, const float pose[16]) {
                 glBindAttribLocation(postPrograms[i], ATTRIBUTE_NORMAL, "texCoord");
             }
 
-            voronoi[index]->load(postPrograms[4]);
+            // voronoi[index]->load(postPrograms[4]);
 
-            uniforms[UNIFORM_WIDTH] = glGetUniformLocation(postPrograms[2], "width");
-            uniforms[UNIFORM_HEIGHT] = glGetUniformLocation(postPrograms[2], "height");
+            uniforms[0][UNIFORM_WIDTH] = glGetUniformLocation(postPrograms[4], "width");
+            uniforms[0][UNIFORM_HEIGHT] = glGetUniformLocation(postPrograms[4], "height");
         }
     }
 #  if HAVE_GLES2
@@ -771,8 +839,6 @@ static void drawPost(size_t index, const float pose[16]) {
                 glVertexAttribPointer(ATTRIBUTE_NORMAL, 2, GL_FLOAT, GL_FALSE, 0, NULL);
                 glEnableVertexAttribArray(ATTRIBUTE_NORMAL);
             }
-
-            glBindVertexArray(gQuadVAO);
     #ifdef DEBUG
             if (!arglGLValidateProgram(postPrograms)) {
                 ARLOGe("drawPost() Error: shader program %d validation failed.\n", postPrograms);
@@ -781,56 +847,176 @@ static void drawPost(size_t index, const float pose[16]) {
     #endif
         }
 #  endif
-    glViewport(gViewport[0] + gViewport[2] / 2 * index, gViewport[1], gViewport[2] / 2, gViewport[3]);
-    glUseProgram(postPrograms[4]);
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    glDisable(GL_DEPTH_TEST);
 
-    glActiveTexture(GL_TEXTURE0);
+    const cv::Mat& depth = index == 0 ? leftDepth : rightDepth;
+    voronoi[index]->updateDepth(depth, modelDepth, pose, gProjection, width, height, contentWidth, contentHeight);
+
+    glBindFramebuffer(GL_FRAMEBUFFER, gFBOs[1]);
     glBindTexture(GL_TEXTURE_2D, gFBOTextures[0]);
-    glActiveTexture(GL_TEXTURE1);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    voronoi[index]->drawPattern(true);
+
+#  if HAVE_GL3
+    glBindVertexArray(gQuadVAO);
+    glUseProgram(postPrograms[4]);
+#  endif
+
+    glUniform1f(uniforms[0][UNIFORM_WIDTH], float(contentWidth));
+    glUniform1f(uniforms[0][UNIFORM_HEIGHT], float(contentHeight));
     glBindTexture(GL_TEXTURE_2D, gFBOTextures[1]);
+    voronoi[index]->updateDensity(postPrograms[4], depth, modelDepth, pose, width, height, contentWidth, contentHeight);
 
-    if (highlight && position[0] == 0.0f) {
-        const int x = mouseX;
-        const int y = mouseY;
-        // printf("%d, %d\n", x, y);
-        // const float d = depth.at<float>(y, x);
-        cv::Vec<float, 3> v = leftDepth.at<cv::Vec<float, 3>>(y, x);
-        // printf("%f, %f, %f\n", v[0], v[1], v[2]);
+    glViewport(gViewport[0] + gViewport[2] / 2 * index, gViewport[1], gViewport[2] / 2, gViewport[3]);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glBindTexture(GL_TEXTURE_2D, gFBOTextures[0]);
 
-        // const float projPos[4] = { float(x) / 1024.0f * 2.0f - 1.0f, float(y) / 1024.0f * -2.0f + 1.0f, 1.0f, 1.0f };
+    voronoi[index]->drawPattern(false);
+    // std::vector<unsigned char> pixels(contentWidth * contentHeight * 4);
+    // glReadPixels(gViewport[0] + gViewport[2] / 2 * index, gViewport[1], contentWidth, contentHeight, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
 
-        // float projInv[16];
-        // invertMatrix(gProjection, projInv);
-        // float viewPos[4];
-        // transformVector(projPos, projInv, viewPos);
-        // for (int i = 0; i < 4; i++) {
-        //     viewPos[i] /= viewPos[3];
-        // }
+    // float viewInv[16];
+    // invertMatrix(pose, viewInv);
+    // if (!worldPositions[index].empty()) {
+    //     const size_t newIndex = (index + 1) % 2;
+    //     int count = 0;
+    //     for (size_t i = 0; i < contentHeight; i++) {
+    //         for (size_t j = 0; j < contentWidth; j++) {
+    //             const size_t index2 = i * contentWidth + j;
+    //             const float worldPos[4] = {
+    //                 worldPositions[newIndex][index2][0],
+    //                 worldPositions[newIndex][index2][1],
+    //                 worldPositions[newIndex][index2][2],
+    //                 1.0f,
+    //             };
+    //             float viewPos[4];
+    //             transformVector(worldPos, pose, viewPos);
 
-        float P[4] = {
-            v[0],
-            v[1],
-            v[2],
-            1.0f
-        };
+    //             for (int j = 0; j < 4; j++) {
+    //                 viewPos[j] /= viewPos[3];
+    //             }
 
-        float viewInv[16];
-        invertMatrix(pose, viewInv);
-        float worldPos[4];
-        transformVector(P, viewInv, worldPos);
+    //             float imagePos[4];
+    //             transformVector(viewPos, gProjection, imagePos);
 
-        for (int i = 0; i < 3; i++) {
-            position[i] = worldPos[i];
-        }
+    //             for (int j = 0; j < 4; j++) {
+    //                 imagePos[j] /= imagePos[3];
+    //             }
 
-        // printf("%f, %f, %f, %f\n", projPos[0], projPos[1], projPos[2], projPos[3]);
-        // printf("%f, %f, %f, %f\n", viewPos[0], viewPos[1], viewPos[2], viewPos[3]);
+    //             const float x = (imagePos[0] + 1.0f) / 2.0f;
+    //             const float y = 1.0f - (imagePos[1] + 1.0f) / 2.0f;
+    //             if (x < 0.0f || y < 0.0f || x >= 1.0f || y >= 1.0f) {
+    //                 continue;
+    //             }
 
-        printf("%f, %f, %f, %f\n", P[0], P[1], P[2], P[3]);
-        printf("%f, %f, %f, %f\n", worldPos[0], worldPos[1], worldPos[2], worldPos[3]);
-    }
+    //             const size_t modelIndex = (int((1.0f - y) * float(contentHeight)) * contentWidth + int(x * float(contentHeight))) * 4;
+    //             cv::Vec3f v;
+    //             if (modelIndex > modelDepth.size()) {
+    //                 v = depth.at<cv::Vec3f>(int(y * float(height)), int(x * float(width)));
+    //             } else {
+    //                 v = cv::Vec3f(
+    //                     modelDepth[modelIndex + 0],
+    //                     modelDepth[modelIndex + 1],
+    //                     modelDepth[modelIndex + 2]
+    //                 );
+    //             }
+
+    //             if (cv::norm(v, cv::Vec3f(viewPos), cv::NORM_L2) <= 0.1) {
+    //                 const size_t ix = int(x * float(contentWidth));
+    //                 const size_t iy = int((1.0f - y) * float(contentHeight));
+    //                 const cv::Vec3b color = colors[newIndex][index2];
+    //                 const size_t pixelIndex = iy * contentWidth + ix;
+    //                 if (pixels[pixelIndex * 4 + 0] != color[0] || pixels[pixelIndex * 4 + 1] != color[1] || pixels[pixelIndex * 4 + 2] != color[2]) {
+    //                     count += 1;
+    //                 }
+    //             }
+    //         }
+    //     }
+    //     printf("Index %d: %d\n", index, count);
+    // }
+
+    // worldPositions[index].resize(contentWidth * contentHeight);
+    // colors[index].resize(contentWidth * contentHeight);
+    // for (size_t i = 0; i < contentHeight; i++) {
+    //     for (size_t j = 0; j < contentWidth; j++) {
+    //         const size_t index2 = i * contentWidth + j;
+    //         const float x = float(j) / float(contentWidth);
+    //         const float y = 1.0f - float(i) / float(contentHeight);
+
+    //         const size_t modelIndex = (int((1.0f - y) * float(contentHeight)) * contentWidth + int(x * float(contentHeight))) * 4;
+    //         cv::Vec3f v;
+    //         if (modelIndex > modelDepth.size()) {
+    //             v = depth.at<cv::Vec3f>(int(y * float(height)), int(x * float(width)));
+    //         } else {
+    //             v = cv::Vec3f(
+    //                 modelDepth[modelIndex + 0],
+    //                 modelDepth[modelIndex + 1],
+    //                 modelDepth[modelIndex + 2]
+    //             );
+    //         }
+
+    //         const float P[4] = {
+    //             v[0],
+    //             v[1],
+    //             v[2],
+    //             1.0f
+    //         };
+    //         float worldPos[4];
+    //         transformVector(P, viewInv, worldPos);
+    //         colors[index][index2] = cv::Vec3b(pixels[index2 * 4 + 0], pixels[index2 * 4 + 1], pixels[index2 * 4 + 2]);
+    //         worldPositions[index][index2] = cv::Vec3f(worldPos[0], worldPos[1], worldPos[2]);
+    //     }
+    // }
+
+    // glViewport(gViewport[0] + gViewport[2] / 2 * index, gViewport[1], gViewport[2] / 2, gViewport[3]);
+    // glUseProgram(postPrograms[4]);
+    // glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    // glDisable(GL_DEPTH_TEST);
+
+    // glActiveTexture(GL_TEXTURE0);
+    // glBindTexture(GL_TEXTURE_2D, gFBOTextures[0]);
+    // glActiveTexture(GL_TEXTURE1);
+    // glBindTexture(GL_TEXTURE_2D, gFBOTextures[1]);
+
+    // if (highlight && position[0] == 0.0f) {
+    //     const int x = mousex;
+    //     const int y = mousey;
+    //     // printf("%d, %d\n", x, y);
+    //     // const float d = depth.at<float>(y, x);
+    //     cv::vec<float, 3> v = leftdepth.at<cv::vec<float, 3>>(y, x);
+    //     // printf("%f, %f, %f\n", v[0], v[1], v[2]);
+
+    //     // const float projpos[4] = { float(x) / 1024.0f * 2.0f - 1.0f, float(y) / 1024.0f * -2.0f + 1.0f, 1.0f, 1.0f };
+
+    //     // float projinv[16];
+    //     // invertmatrix(gprojection, projinv);
+    //     // float viewpos[4];
+    //     // transformvector(projpos, projinv, viewpos);
+    //     // for (int i = 0; i < 4; i++) {
+    //     //     viewpos[i] /= viewpos[3];
+    //     // }
+
+    //     float p[4] = {
+    //         v[0],
+    //         v[1],
+    //         v[2],
+    //         1.0f
+    //     };
+
+    //     float viewinv[16];
+    //     invertmatrix(pose, viewinv);
+    //     float worldpos[4];
+    //     transformvector(p, viewinv, worldpos);
+
+    //     for (int i = 0; i < 3; i++) {
+    //         position[i] = worldpos[i];
+    //     }
+
+    //     // printf("%f, %f, %f, %f\n", projpos[0], projpos[1], projpos[2], projpos[3]);
+    //     // printf("%f, %f, %f, %f\n", viewpos[0], viewpos[1], viewpos[2], viewpos[3]);
+
+    //     printf("%f, %f, %f, %f\n", p[0], p[1], p[2], p[3]);
+    //     printf("%f, %f, %f, %f\n", worldpos[0], worldpos[1], worldpos[2], worldpos[3]);
+    // }
 
     // if (index == 0) {
     //     float worldPos[4];
@@ -850,9 +1036,9 @@ static void drawPost(size_t index, const float pose[16]) {
     //     printf("%f, %f, %f, %f\n", temp2[0], temp2[1], temp2[2], temp2[3]);
     // }
 
-    voronoi[index]->prepare(postPrograms[4], position, pose, gProjection, highlight);
+    // voronoi[index]->prepare(postPrograms[4], position, pose, gProjection, highlight);
 
-    glDrawArrays(GL_TRIANGLES, 0, 6);
+    // glDrawArrays(GL_TRIANGLES, 0, 6);
 
     // // RGB to LAB
     // glUseProgram(postPrograms[0]);
@@ -895,7 +1081,7 @@ static void drawPost(size_t index, const float pose[16]) {
 
     // glDrawArrays(GL_TRIANGLES, 0, 6);
 
-    glBindTexture(GL_TEXTURE_2D, 0);
+//     glBindTexture(GL_TEXTURE_2D, 0);
 #endif
 #if HAVE_GL3
     glBindVertexArray(0);

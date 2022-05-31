@@ -3,7 +3,7 @@ if [ "$1" = "live" ]; then
 # elif [ $1 = "" ]; then
 #     firejail --net=none --private=./ prime-run SDK/bin/artoolkitx_square_tracking_example --vconf "-module=V4L2 -width=1280 -height=720 -dev=/dev/video4 -format=BGRA"
 elif [ "$1" = "single" ]; then
-    firejail --net=none --whitelist=~/projects/RP/source/artoolkitx sh -c "cd video; ../SDK/bin/artoolkitx_square_tracking_example --vconfl \"-module=Image -image=temp.jpg\" --vconfr \"-module=Image -image=temp.jpg\""
+    firejail --net=none --whitelist=~/projects/RP/source/artoolkitx sh -c "cd video; ../SDK/bin/artoolkitx_square_tracking_example --vconfl \"-module=Image -image=ar2.jpg\" --vconfr \"-module=Image -image=ar2.jpg\""
 else
-    firejail --net=none --whitelist=~/projects/RP/source/artoolkitx sh -c "cd video; ../SDK/bin/artoolkitx_square_tracking_example --vconfl \"-module=Image $(python video/arguments.py L) -loop\" --vconfr \"-module=Image $(python video/arguments.py R) -loop\""
+    firejail --net=none --whitelist=~/projects/RP/source/artoolkitx sh -c "cd video; ../SDK/bin/artoolkitx_square_tracking_example --vconfl \"-module=Image $(python video/arguments.py L)\" --vconfr \"-module=Image $(python video/arguments.py R)\""
 fi
