@@ -4,6 +4,7 @@ Examples/*.apk
 Examples/*.app
 Examples/*.exe
 video/
+video2/
 
 ### Packaging
 Source/packaging/linux/cpack/

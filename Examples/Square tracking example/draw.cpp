@@ -366,8 +366,8 @@ void drawUpdate(int width, int height, int contentWidth, int contentHeight, std:
 
     // printf("%f, %f\n", min, max);
 
-    cv::imwrite("disparityFL.jpg", leftFilteredDisparity);
-    cv::imwrite("disparityFR.jpg", -rightFilteredDisparity);
+    // cv::imwrite("disparityFL.jpg", leftFilteredDisparity);
+    // cv::imwrite("disparityFR.jpg", -rightFilteredDisparity);
     // cv::imwrite("disparityL.jpg", leftDisparity);
     // cv::imwrite("disparityR.jpg", -rightDisparity);
 
@@ -645,6 +645,7 @@ void draw(size_t index, int width, int height, int contentWidth, int contentHeig
 
                 glUseProgram(depthProgram);
                 glBindFramebuffer(GL_FRAMEBUFFER, gFBOs[2]);
+                glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
                 drawModel(&(gModelPoses[i][0]), 1);
                 glReadPixels(0, 0, contentWidth, contentHeight, GL_RGBA, GL_FLOAT, modelDepth.data());
 
@@ -871,101 +872,157 @@ static void drawPost(size_t index, const float pose[16], const std::vector<float
     glBindTexture(GL_TEXTURE_2D, gFBOTextures[0]);
 
     voronoi[index]->drawPattern(false);
-    // std::vector<unsigned char> pixels(contentWidth * contentHeight * 4);
-    // glReadPixels(gViewport[0] + gViewport[2] / 2 * index, gViewport[1], contentWidth, contentHeight, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
 
-    // float viewInv[16];
-    // invertMatrix(pose, viewInv);
-    // if (!worldPositions[index].empty()) {
-    //     const size_t newIndex = (index + 1) % 2;
-    //     int count = 0;
-    //     for (size_t i = 0; i < contentHeight; i++) {
-    //         for (size_t j = 0; j < contentWidth; j++) {
-    //             const size_t index2 = i * contentWidth + j;
-    //             const float worldPos[4] = {
-    //                 worldPositions[newIndex][index2][0],
-    //                 worldPositions[newIndex][index2][1],
-    //                 worldPositions[newIndex][index2][2],
-    //                 1.0f,
-    //             };
-    //             float viewPos[4];
-    //             transformVector(worldPos, pose, viewPos);
+# if true
+    std::vector<unsigned char> pixels(contentWidth * contentHeight * 4);
+    glReadPixels(gViewport[0] + gViewport[2] / 2 * index, gViewport[1], contentWidth, contentHeight, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
 
-    //             for (int j = 0; j < 4; j++) {
-    //                 viewPos[j] /= viewPos[3];
-    //             }
+    float viewInv[16];
+    invertMatrix(pose, viewInv);
+    if (!worldPositions[index].empty()) {
+        const size_t newIndex = (index + 1) % 2;
+        std::vector<float> differencesRaw;
+        differencesRaw.reserve(contentWidth * contentHeight);
+        float count = 0.0f;
 
-    //             float imagePos[4];
-    //             transformVector(viewPos, gProjection, imagePos);
+        for (size_t i = 0; i < contentHeight; i++) {
+            for (size_t j = 0; j < contentWidth; j++) {
+                const size_t index2 = i * contentWidth + j;
+                const float worldPos[4] = {
+                    worldPositions[newIndex][index2][0],
+                    worldPositions[newIndex][index2][1],
+                    worldPositions[newIndex][index2][2],
+                    1.0f,
+                };
+                float viewPos[4];
+                transformVector(worldPos, pose, viewPos);
 
-    //             for (int j = 0; j < 4; j++) {
-    //                 imagePos[j] /= imagePos[3];
-    //             }
+                for (int j = 0; j < 4; j++) {
+                    viewPos[j] /= viewPos[3];
+                }
 
-    //             const float x = (imagePos[0] + 1.0f) / 2.0f;
-    //             const float y = 1.0f - (imagePos[1] + 1.0f) / 2.0f;
-    //             if (x < 0.0f || y < 0.0f || x >= 1.0f || y >= 1.0f) {
-    //                 continue;
-    //             }
+                float imagePos[4];
+                transformVector(viewPos, gProjection, imagePos);
 
-    //             const size_t modelIndex = (int((1.0f - y) * float(contentHeight)) * contentWidth + int(x * float(contentHeight))) * 4;
-    //             cv::Vec3f v;
-    //             if (modelIndex > modelDepth.size()) {
-    //                 v = depth.at<cv::Vec3f>(int(y * float(height)), int(x * float(width)));
-    //             } else {
-    //                 v = cv::Vec3f(
-    //                     modelDepth[modelIndex + 0],
-    //                     modelDepth[modelIndex + 1],
-    //                     modelDepth[modelIndex + 2]
-    //                 );
-    //             }
+                for (int j = 0; j < 4; j++) {
+                    imagePos[j] /= imagePos[3];
+                }
 
-    //             if (cv::norm(v, cv::Vec3f(viewPos), cv::NORM_L2) <= 0.1) {
-    //                 const size_t ix = int(x * float(contentWidth));
-    //                 const size_t iy = int((1.0f - y) * float(contentHeight));
-    //                 const cv::Vec3b color = colors[newIndex][index2];
-    //                 const size_t pixelIndex = iy * contentWidth + ix;
-    //                 if (pixels[pixelIndex * 4 + 0] != color[0] || pixels[pixelIndex * 4 + 1] != color[1] || pixels[pixelIndex * 4 + 2] != color[2]) {
-    //                     count += 1;
-    //                 }
-    //             }
-    //         }
-    //     }
-    //     printf("Index %d: %d\n", index, count);
-    // }
+                const float x = (imagePos[0] + 1.0f) / 2.0f;
+                const float y = 1.0f - (imagePos[1] + 1.0f) / 2.0f;
+                if (isnan(x) || isnan(y) || isinf(x) || isinf(y) || x < 0.0f || y < 0.0f || x >= 1.0f || y >= 1.0f) {
+                    differencesRaw.push_back(-1.0f);
+                    continue;
+                }
 
-    // worldPositions[index].resize(contentWidth * contentHeight);
-    // colors[index].resize(contentWidth * contentHeight);
-    // for (size_t i = 0; i < contentHeight; i++) {
-    //     for (size_t j = 0; j < contentWidth; j++) {
-    //         const size_t index2 = i * contentWidth + j;
-    //         const float x = float(j) / float(contentWidth);
-    //         const float y = 1.0f - float(i) / float(contentHeight);
+                const size_t modelIndex = ((contentHeight - int(y * float(contentHeight)) - 1) * contentWidth + int(x * float(contentHeight))) * 4;
+                cv::Vec3f v = cv::Vec3f(0.0f, 0.0f, 0.0f);
 
-    //         const size_t modelIndex = (int((1.0f - y) * float(contentHeight)) * contentWidth + int(x * float(contentHeight))) * 4;
-    //         cv::Vec3f v;
-    //         if (modelIndex > modelDepth.size()) {
-    //             v = depth.at<cv::Vec3f>(int(y * float(height)), int(x * float(width)));
-    //         } else {
-    //             v = cv::Vec3f(
-    //                 modelDepth[modelIndex + 0],
-    //                 modelDepth[modelIndex + 1],
-    //                 modelDepth[modelIndex + 2]
-    //             );
-    //         }
+                if (modelIndex < modelDepth.size() - 2) {
+                    v = cv::Vec3f(
+                        modelDepth[modelIndex + 0],
+                        modelDepth[modelIndex + 1],
+                        modelDepth[modelIndex + 2]
+                    );
+                }
 
-    //         const float P[4] = {
-    //             v[0],
-    //             v[1],
-    //             v[2],
-    //             1.0f
-    //         };
-    //         float worldPos[4];
-    //         transformVector(P, viewInv, worldPos);
-    //         colors[index][index2] = cv::Vec3b(pixels[index2 * 4 + 0], pixels[index2 * 4 + 1], pixels[index2 * 4 + 2]);
-    //         worldPositions[index][index2] = cv::Vec3f(worldPos[0], worldPos[1], worldPos[2]);
-    //     }
-    // }
+                if (v[0] == 0.0f && v[1] == 0.0f && v[2] == 0.0f) {
+                    const size_t ix = int(x * float(width));
+                    const size_t iy = int(y * float(height));
+                    v = depth.at<cv::Vec3f>(iy, ix);
+                }
+
+                if (cv::norm(v, cv::Vec3f(viewPos), cv::NORM_L2) <= 0.1f) {
+                    const size_t ix = int(x * float(contentWidth));
+                    const size_t iy = contentHeight - int(y * float(contentHeight)) - 1;
+                    const cv::Vec3b color = colors[newIndex][index2];
+                    const size_t pixelIndex = (iy * contentWidth + ix) * 4;
+                    const float value = cv::norm(cv::Vec3f(color) / 255.0, cv::Vec3f(pixels[pixelIndex + 0], pixels[pixelIndex + 1], pixels[pixelIndex + 2]) / 255.0, cv::NORM_L2);
+                    differencesRaw.push_back(value);
+                    count += value;
+                } else {
+                    differencesRaw.push_back(-1.0f);
+                }
+            }
+        }
+
+        float normFactor = 0.1f;
+        // const float mean = count / float(contentWidth * contentHeight);
+        // float sd = 0.0f;
+        // for (float x : differencesRaw) {
+        //     if (x == -1.0f) {
+        //         continue;
+        //     }
+        //     sd += (x - mean) * (x - mean);
+        // }
+
+        // sd /= float(contentWidth * contentHeight - 1);
+
+        // for (float x : differencesRaw) {
+        //     if (x == -1.0f || x - mean > 3 * sd) {
+        //         continue;
+        //     }
+        //     normFactor = std::max(normFactor, x);
+        // }
+
+        printf("Index %d: %f\n", index, count);
+        std::vector<cv::Vec3b> differences;
+        differences.reserve(contentWidth * contentHeight);
+        for (size_t i = 0; i < contentHeight; i++) {
+            for (size_t j = 0; j < contentWidth; j++) {
+                const float diff = differencesRaw[(contentHeight - i - 1) * contentWidth + j];
+                if (diff == -1.0f) {
+                    differences.push_back(cv::Vec3b(0, 255, 0));
+                } else {
+                    differences.push_back(cv::Vec3b(0, 0, int(diff / normFactor * 256.0f)));
+                }
+            }
+        }
+
+        cv::Mat diffImage(contentHeight, contentWidth, CV_8UC3, differences.data());
+        if (index == 0) {
+            cv::imwrite("differenceL.jpg", diffImage);
+        } else {
+            cv::imwrite("differenceR.jpg", diffImage);
+        }
+    }
+
+    worldPositions[index].resize(contentWidth * contentHeight);
+    colors[index].resize(contentWidth * contentHeight);
+    for (size_t i = 0; i < contentHeight; i++) {
+        for (size_t j = 0; j < contentWidth; j++) {
+            const size_t index2 = i * contentWidth + j;
+            const float x = float(j) / float(contentWidth);
+            const float y = float(contentHeight - i - 1) / float(contentHeight);
+
+            cv::Vec3f v = cv::Vec3f(0.0f, 0.0f, 0.0f);
+            if (index2 * 4 < modelDepth.size() - 2) {
+                v = cv::Vec3f(
+                    modelDepth[index2 * 4 + 0],
+                    modelDepth[index2 * 4 + 1],
+                    modelDepth[index2 * 4 + 2]
+                );
+            }
+
+            if (v[0] == 0.0f && v[1] == 0.0f && v[2] == 0.0f) {
+                v = depth.at<cv::Vec3f>(int(y * float(height)), int(x * float(width)));
+            }
+
+            const float P[4] = {
+                v[0],
+                v[1],
+                v[2],
+                1.0f
+            };
+            float worldPos[4];
+            transformVector(P, viewInv, worldPos);
+            colors[index][index2] = cv::Vec3b(pixels[index2 * 4 + 0], pixels[index2 * 4 + 1], pixels[index2 * 4 + 2]);
+            worldPositions[index][index2] = cv::Vec3f(worldPos[0], worldPos[1], worldPos[2]);
+        }
+    }
+# endif
+
+    // cv::Mat diff(contentHeight, contentWidth, CV_U8C3);
 
     // glViewport(gViewport[0] + gViewport[2] / 2 * index, gViewport[1], gViewport[2] / 2, gViewport[3]);
     // glUseProgram(postPrograms[4]);

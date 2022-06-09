@@ -58,7 +58,9 @@ private:
     std::vector<float> worldPositions;
 
     const Voronoi* other;
-    static constexpr float EPSILON = 0.2;
+    static constexpr float EPSILON = 0.2f;
+    static constexpr float ALPHA = 0.01f;
+    static constexpr float BETA = 0.9f;
 
     void loadPrograms(ARG_API drawAPI) {
         const char vertShaderStringGLES2[] =
@@ -240,10 +242,6 @@ public:
         invertMatrix(view, viewInv);
         // float projInv[16];
         // invertMatrix(projection, projInv);
-        // cv::Vec3f vasdf = depth.at<cv::Vec3f>(675, 653);
-        // printf("%f, %f, %f\n", vasdf[0], vasdf[1], vasdf[2]);
-        // size_t aa = 422 * contentWidth + 408;
-        // printf()
 
         if (worldPositions.empty()) {
             if (other) {
@@ -330,10 +328,23 @@ public:
         std::vector<unsigned char> density(m * n * 3);
         glReadPixels(0, 0, m, n, GL_RGB, GL_UNSIGNED_BYTE, density.data());
 
+        const float mInv = 1.0f / float(m);
+        const float nInv = 1.0f / float(n);
+
         for (size_t i = 0; i < n; i++) {
             for (size_t j = 0; j < m; j++) {
-                if (density[((n - i - 1) * m + j) * 3] > float(0.01 * 255.0)) {
+                const float d = float(density[((n - i - 1) * m + j) * 3]) / 255.0f;
+                if (d > ALPHA && d < BETA) {
                     continue;
+                }
+                if (d >= BETA) {
+                    for (int k = offsets.size() - 2; k >= 0; k -= 2) {
+                        const float x = offsets[k + 0];
+                        const float y = 1.0f - offsets[k + 1];
+                        if (x >= float(j) * mInv && y >= float(i) * nInv && x < float(j + 1) * mInv && y < float(i + 1) * nInv) {
+                            offsets.erase(offsets.begin() + k, offsets.begin() + k + 2);
+                        }
+                    }
                 }
                 const float x = (j + float(rand()) / float(RAND_MAX)) / float(m);
                 const float y = (i + float(rand()) / float(RAND_MAX)) / float(n);
