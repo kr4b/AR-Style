@@ -27,3 +27,8 @@ The video frames required to run the application are not provided with this proj
 - Frame 100 left: 0100L.jpg
 - Frame 100 right: 0100R.jpg
 
+
+To build on Linux, build the ARToolkitX framework by running `build.sh` and then build the example by running `Examples/Stereo Stylization Coherence/build.sh`.
+
+If the build succeeds, run by using `run.sh`.
+
