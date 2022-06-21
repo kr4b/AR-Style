@@ -1,6 +1,6 @@
 #
 # artoolkitX Examples CMake configuration file.
-# Square tracking example
+# Stereo Stylization Coherence
 #
 # To invoke CMake on this file, from the chosen build directory, invoke:
 #     cmake <path to directory containing this file>.
@@ -17,7 +17,7 @@ if(DEFINED CMAKE_BUILD_TYPE)
   set_property( CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS ${CMAKE_CONFIGURATION_TYPES} )
 endif()
 
-project("artoolkitx_square_tracking_example"
+project("artoolkitx_stereo_stylization_coherence"
         VERSION 1.0.0
         LANGUAGES CXX C
 )
@@ -100,10 +100,6 @@ set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${DEVICE_FLAGS} -DGL_GLEXT_PROTOTYPES=1 -fPI
 set(RESOURCES
     ../hiro.patt
     ../kanji.patt
-    ../shaders/filter.frag
-    ../shaders/edge.frag
-    ../shaders/lab2rgb.frag
-    ../shaders/rgb2lab.frag
     ../shaders/voronoi.frag
     ../shaders/shaderES2.frag
     ../models/shrek.mtl

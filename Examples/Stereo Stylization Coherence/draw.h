@@ -45,19 +45,27 @@
 extern "C" {
 #endif
 
+// Inititialize necessary data, to be called once at startup
 void drawInit();
-void drawToggleStyle();
+// Toggle the drawing of virtual models
 void drawToggleModels();
-void drawToggleHighlight();
+// Recreate OpenGL context and buffers
 void drawSetup(ARG_API drawAPI_in, bool rotate90_in, bool flipH_in, bool flipV_in, int width, int height);
+// Update objects requiring frame data (disparity/view space maps)
 void drawUpdate(int width, int height, int contentWidth, int contentHeight, std::vector<unsigned char> frames[2]);
-bool drawMouseMove(int x, int y);
+// Enable framebuffer and viewport for capturing frames and virtual models on a texture
 void drawPrepare();
-int drawLoadModel(const char *path);
+// Load virtual models
+int drawLoadModel();
+// Set viewport
 void drawSetViewport(int32_t viewport[4]);
+// Set projection and view matrix
 void drawSetCamera(float projection[16], float view[16]);
+// Set visibility and pose of virtual model
 void drawSetModel(int modelIndex, bool visible, float pose[16]);
+// Draw virtual model and stylize resulting texture, to be called after drawUpdate
 void draw(size_t index, int width, int height, int contentWidth, int contentHeight);
+// Cleanup OpenGL
 void drawCleanup();
 
 #ifdef __cplusplus

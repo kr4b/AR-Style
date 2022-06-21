@@ -1,6 +1,6 @@
 #
 # artoolkitX Examples CMake configuration file.
-# Square tracking example
+# Stereo Stylization Coherence
 #
 # To invoke CMake on this file, from the chosen build directory, invoke:
 #     cmake <path to directory containing this file>.
@@ -12,7 +12,7 @@ cmake_minimum_required( VERSION 3.2 )
 
 # Any directives that must go before the project command.
 
-project("artoolkitx_square_tracking_example"
+project("artoolkitx_stereo_stylization_coherence"
         VERSION 1.0.0
         LANGUAGES CXX C
 )

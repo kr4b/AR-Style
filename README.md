@@ -1,24 +1,29 @@
-# Read me for artoolkitX
+Coherent Stylization for Stereoscopic Augmented Reality
+======================================================
 
-## Build state
+Code repository for research on `Coherent Stylization for Stereoscopic Augmented Reality`, as part of the [TU Delft Research Project](https://cse3000-research-project.github.io/2022/Q4).
+More specifically, this research is a sub-project of the project `Media of the Future`.
+The respective research paper can be found [here](http://resolver.tudelft.nl/uuid:c5b8ae9a-7e0b-412f-ab12-40d9f9613e5b).
 
-| macos | iOS | Android | Linux | Windows |
-| ----- | --- | ------- | ----- | ------- |
-| [![Build Status](https://app.bitrise.io/app/65fba7d9f8fcd7ea/status.svg?token=SPF12BtEIvl3N4ytGX6ufw&branch=master)](https://www.bitrise.io/app/65fba7d9f8fcd7ea) | [![Build Status](https://app.bitrise.io/app/ea6b9e1aa405226c/status.svg?token=6mG1DSPAOxYpbJwu7m0UoQ&branch=master)](https://www.bitrise.io/app/ea6b9e1aa405226c) | [![Build Status](https://app.bitrise.io/app/242f3d0f8e8c3600/status.svg?token=nFHb56TVGwG4tHWaXkAOmg&branch=master)](https://www.bitrise.io/app/242f3d0f8e8c3600) | [![Build Status](https://app.bitrise.io/app/a03cbf8285d58247/status.svg?token=DBMpOGaixYVi7MtzGRnDpg&branch=master)](https://www.bitrise.io/app/a03cbf8285d58247)| [![Build Status](https://dev.azure.com/artoolkitx/artoolkitx/_apis/build/status/build?branchName=master")](https://dev.azure.com/artoolkitx/artoolkitx/_build)| 
+This project makes use of [OpenCV](https://opencv.org/) and [ARToolkitX](https://github.com/artoolkitx/artoolkitx).
 
-## What is artoolkitX?
-artoolkitX version 1.0 is a software development kit (SDK) consisting of libraries and utilities that help developers implement the foundation of great augmented and mixed reality applications. The SDK includes some examples of applications that demonstrate the capabilities of artoolkitX. artoolkitX supports a wide-variety of platforms, including iOS and Android, and macOS, Windows, and Linux.
+Most of the contributed code for this project is located in `Examples/Stereo Stylization Coherence`.
+The most prominent code related to the research can be found in `draw.cpp` and `voronoi.hpp` in the aforementioned folder.
 
-artoolkitX is free to use! The SDK is licensed under the GNU Lesser General Public License version 3.0, allowing for linking into both closed- and open-source software. Please read the file [license](LICENSE.txt) to understand your rights and obligations when using artoolkitX.
+- `voronoi.hpp` - Contains code related to generating the voronoi pattern, relocating anchor points and redistributing the density.
+- `draw.cpp` - Contains code related to coordinating the rendering and generating the quantitative results.
 
-Complete source is provided, and we encourage users to favourite the project on GitHub at https://github.com/artoolkitx/artoolkitx and log issues and read the documentation provided there, and to join the artoolkitX community via our homepage at http://www.artoolkitx.org.
+## Usage
 
-artoolkitX's development is sponsored by [Realmax, Inc.](http://www.realmax.com), a leader in augmented reality hardware and software. The open source project is administered by long-term developers of ARToolKit and from and the open-source community.
+The code was developed and tested on a Linux system.
+It might work on Windows with a bit of effort, and macOS with a bit more effort.
+With a lot of effort it could probably even work on Android and/or iOS systems, but the OpenGL code is not fully converted to OpenGL ES.
 
-For experienced developers wanting to quickly make use of the SDK, please read the file [Quick start](Quick%20start.md). To read about the changes in this release, please read the file [Release notes](Release%20Notes.md).
+The video frames required to run the application are not provided with this project, but should be placed in the `video` directory with the following naming convention:
 
-## Join the artoolkitX community:
+- Frame 0 left: 0000L.jpg
+- Frame 0 right: 0000R.jpg
+- ...
+- Frame 100 left: 0100L.jpg
+- Frame 100 right: 0100R.jpg
 
-* Join our forum and chat with other developers: https://forums.artoolkitx.org
-* Report and help with issues: https://github.com/artoolkitx/artoolkitx/issues
-* Follow us on social media: https://twitter.com/artoolkitx and https://www.facebook.com/artoolkitX/

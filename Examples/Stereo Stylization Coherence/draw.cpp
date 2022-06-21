@@ -81,7 +81,7 @@
 #endif // HAVE_GLES2 || HAVE_GL3
 
 #define DRAW_MODELS_MAX 32
-#define PROGRAM_COUNT 5
+#define BASELINE false
 
 #if HAVE_GLES2 || HAVE_GL3
 // Indices of GL program uniforms.
@@ -104,7 +104,7 @@ enum {
 static GLint uniforms[2][UNIFORM_COUNT] = {0};
 static GLuint program = 0;
 static GLuint depthProgram = 0;
-static GLuint postPrograms[PROGRAM_COUNT] = {0};
+static GLuint postProgram = 0;
 
 #if HAVE_GL3
 static GLuint gModelVAO = 0;
@@ -165,8 +165,6 @@ static bool rotate90 = false;
 static bool flipH = false;
 static bool flipV = false;
 static bool visible = true;
-static bool stylize = true;
-static bool highlight = false;
 
 static int32_t gViewport[4] = {0};
 static float gProjection[16];
@@ -191,6 +189,7 @@ static float position[3] = {0};
 static int mouseX = 0, mouseY = 0;
 
 void drawInit() {
+    // Load virtual model
     const char *resourcesDir = arUtilGetResourcesDirectoryPath(
         AR_UTIL_RESOURCES_DIRECTORY_BEHAVIOR_BEST);
     const std::string path = std::string(resourcesDir) + "/shrek.obj";
@@ -205,27 +204,15 @@ void drawInit() {
         mNormals.insert(mNormals.end(), {vertex.Normal.X, vertex.Normal.Y, vertex.Normal.Z});
     }
 
+    // Create stereo matchers and filters
     stereoLeft = cv::StereoSGBM::create(0, 64, 9);
     wlsFilterLeft = cv::ximgproc::createDisparityWLSFilter(stereoLeft);
     stereoRight = cv::ximgproc::createRightMatcher(stereoLeft);
     wlsFilterRight = cv::ximgproc::createDisparityWLSFilter(stereoRight);
-
-    // stereo->setMode(cv::StereoSGBM::MODE_HH);
-    // stereo->setUniquenessRatio(10);
-    // stereo->setSpeckleWindowSize(100);
-    // stereo->setSpeckleRange(2);
 }
 
 void drawToggleModels() {
     visible = !visible;
-}
-
-void drawToggleStyle() {
-    stylize = !stylize;
-}
-
-void drawToggleHighlight() {
-    highlight = !highlight;
 }
 
 void drawSetup(ARG_API drawAPI_in, bool rotate90_in, bool flipH_in, bool flipV_in, int width, int height) {
@@ -284,9 +271,13 @@ void drawSetup(ARG_API drawAPI_in, bool rotate90_in, bool flipH_in, bool flipV_i
     flipH = flipH_in;
     flipV = flipV_in;
 
+    // Load Voronoi instances (swap bottom two for baseline)
     voronoi[0] = new Voronoi(drawAPI, 80, 80, width, height);
+#if BASELINE
+    voronoi[1] = new Voronoi(drawAPI, 80, 80, width, height);
+#else
     voronoi[1] = new Voronoi(drawAPI, voronoi[0]);
-    // voronoi[1] = new Voronoi(drawAPI, 80, 80, width, height);
+#endif
 
 #if HAVE_GLES2 || HAVE_GL3
     glActiveTexture(GL_TEXTURE0);
@@ -338,7 +329,7 @@ void drawUpdate(int width, int height, int contentWidth, int contentHeight, std:
     cv::Mat right(width, height, CV_8UC4, frames[1].data());
     cv::Mat leftGray, rightGray, leftDisparity, rightDisparity, leftFilteredDisparity, rightFilteredDisparity;
 
-    // cv::resize(left, leftGray)
+    // Image preprocessing
     cv::cvtColor(left, left, cv::COLOR_RGBA2RGB);
     cv::cvtColor(right, right, cv::COLOR_RGBA2RGB);
     cv::cvtColor(left, leftGray, cv::COLOR_RGB2GRAY);
@@ -346,6 +337,7 @@ void drawUpdate(int width, int height, int contentWidth, int contentHeight, std:
     cv::resize(leftGray, leftGray, cv::Size(), 0.5, 0.5, cv::INTER_LINEAR_EXACT);
     cv::resize(rightGray, rightGray, cv::Size(), 0.5, 0.5, cv::INTER_LINEAR_EXACT);
 
+    // Stereo matching
     stereoLeft->compute(leftGray, rightGray, leftDisparity);
     stereoRight->compute(rightGray, leftGray, rightDisparity);
     leftDisparity.convertTo(leftDisparity, CV_32F, 1.0);
@@ -354,28 +346,19 @@ void drawUpdate(int width, int height, int contentWidth, int contentHeight, std:
     leftDisparity = (leftDisparity / 16.0f);
     rightDisparity = (rightDisparity / 16.0f);
 
+    // Disparity filtering
     wlsFilterLeft->filter(leftDisparity, left, leftFilteredDisparity, rightDisparity);
     wlsFilterRight->filter(rightDisparity, right, rightFilteredDisparity, leftDisparity);
 
-    // float min = 1000.0f, max = -1000.0f;
-    // for (int i = 0; i < width * height; i++) {
-    //     const float d = disparity.at<float>(i);
-    //     if (d > 0 && d < min) min = d;
-    //     if (d > max) max = d;
-    // }
-
-    // printf("%f, %f\n", min, max);
-
+    // Save disparity maps
     // cv::imwrite("disparityFL.jpg", leftFilteredDisparity);
     // cv::imwrite("disparityFR.jpg", -rightFilteredDisparity);
     // cv::imwrite("disparityL.jpg", leftDisparity);
     // cv::imwrite("disparityR.jpg", -rightDisparity);
 
-    // float focal = 1024.0f / 36.0f * 50.0f;
-    // float focal = 1236.077344;
+    // Convert disparity to view space map
     float focal = 1024.0f / 2.0f / tan(45.0f / 180.0f * M_PI / 2.0f);
     float baseline = 0.055f;
-    // TODO: Investigate this magic 0.895 number
     float QData[16] = {
         -1.0f, 0.0f, 0.0f, float(width) / 2.0f,
         0.0f, 1.0f, 0.0f, -float(height) / 2.0f,
@@ -386,21 +369,13 @@ void drawUpdate(int width, int height, int contentWidth, int contentHeight, std:
     cv::reprojectImageTo3D(leftFilteredDisparity, leftDepth, Q);
     cv::reprojectImageTo3D(-rightFilteredDisparity, rightDepth, Q);
     // depth = focal * baseline / disparity;
+
     // auto now = std::chrono::system_clock::now();
     // auto elapsed = now - start;
     // printf("Disparity: %d\n", std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count());
 }
 
-bool drawMouseMove(int x, int y) {
-    if (!highlight) {
-        return false;
-    }
-    mouseX = x;
-    mouseY = y;
-    position[0] = 0.0f;
-    return true;
-}
-
+// Prepare framebuffer for rendering of real image
 void drawPrepare() {
     glBindFramebuffer(GL_FRAMEBUFFER, gFBOs[0]);
     glViewport(0, 0, gViewport[2] / 2, gViewport[3]);
@@ -439,8 +414,7 @@ void drawCleanup() {
     return;
 }
 
-int drawLoadModel(const char *path) {
-    // Ignore path, we'll always draw a cube.
+int drawLoadModel() {
     for (int i = 0; i < DRAW_MODELS_MAX; i++) {
         if (!gModelLoaded[i]) {
             gModelLoaded[i] = true;
@@ -640,9 +614,11 @@ void draw(size_t index, int width, int height, int contentWidth, int contentHeig
     if (visible) {
         for (int i = 0; i < DRAW_MODELS_MAX; i++) {
             if (i == index && gModelLoaded[i] && gModelVisbilities[i]) {
+                // Draw virtual model
                 glUseProgram(program);
                 drawModel(&(gModelPoses[i][0]), 0);
 
+                // Draw view space coordinates of virtual model
                 glUseProgram(depthProgram);
                 glBindFramebuffer(GL_FRAMEBUFFER, gFBOs[2]);
                 glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -655,10 +631,10 @@ void draw(size_t index, int width, int height, int contentWidth, int contentHeig
         }
     }
 
+    // Post processing step (stylization)
     drawPost(index, &(gModelPoses[poseIndex][0]), modelDepth, width, height, contentWidth, contentHeight);
 }
 
-// Something to look at, draw a rotating colour cube.
 static void drawModel(float pose[16], size_t uniform_index) {
     int i;
 #if HAVE_GLES2 || HAVE_GL3
@@ -762,13 +738,9 @@ static void drawPost(size_t index, const float pose[16], const std::vector<float
 
 #if HAVE_GLES2 || HAVE_GL3
     if (drawAPI == ARG_API_GLES2 || drawAPI == ARG_API_GL3) {
-        if (!postPrograms[0]) {
+        if (!postProgram) {
             const char *resourcesDir = arUtilGetResourcesDirectoryPath(
                 AR_UTIL_RESOURCES_DIRECTORY_BEHAVIOR_BEST);
-            const std::string rgb2lab = std::string(resourcesDir) + "/rgb2lab.frag";
-            const std::string filter = std::string(resourcesDir) + "/filter.frag";
-            const std::string edge = std::string(resourcesDir) + "/edge.frag";
-            const std::string lab2rgb = std::string(resourcesDir) + "/lab2rgb.frag";
             const std::string voronoiString = std::string(resourcesDir) + "/voronoi.frag";
             const std::string fragPathGLES2 = std::string(resourcesDir) + "/shaderES2.frag";
 
@@ -790,26 +762,14 @@ static void drawPost(size_t index, const float pose[16], const std::vector<float
                     "vTexCoord = texCoord;\n"
                 "}\n";
 
-            postPrograms[0] =
-                loadShaderProgram(NULL, drawAPI == ARG_API_GL3 ? vertShaderStringGL3 : vertShaderStringGLES2, drawAPI == ARG_API_GL3 ? rgb2lab.c_str() : fragPathGLES2.c_str(), NULL);
-            postPrograms[1] =
-                loadShaderProgram(NULL, drawAPI == ARG_API_GL3 ? vertShaderStringGL3 : vertShaderStringGLES2, drawAPI == ARG_API_GL3 ? filter.c_str() : fragPathGLES2.c_str(), NULL);
-            postPrograms[2] =
-                loadShaderProgram(NULL, drawAPI == ARG_API_GL3 ? vertShaderStringGL3 : vertShaderStringGLES2, drawAPI == ARG_API_GL3 ? edge.c_str() : fragPathGLES2.c_str(), NULL);
-            postPrograms[3] =
-                loadShaderProgram(NULL, drawAPI == ARG_API_GL3 ? vertShaderStringGL3 : vertShaderStringGLES2, drawAPI == ARG_API_GL3 ? lab2rgb.c_str() : fragPathGLES2.c_str(), NULL);
-            postPrograms[4] =
+            postProgram =
                 loadShaderProgram(NULL, drawAPI == ARG_API_GL3 ? vertShaderStringGL3 : vertShaderStringGLES2, drawAPI == ARG_API_GL3 ? voronoiString.c_str() : fragPathGLES2.c_str(), NULL);
 
-            for (size_t i = 0; i < PROGRAM_COUNT; i++) {
-                glBindAttribLocation(postPrograms[i], ATTRIBUTE_VERTEX, "position");
-                glBindAttribLocation(postPrograms[i], ATTRIBUTE_NORMAL, "texCoord");
-            }
+            glBindAttribLocation(postProgram, ATTRIBUTE_VERTEX, "position");
+            glBindAttribLocation(postProgram, ATTRIBUTE_NORMAL, "texCoord");
 
-            // voronoi[index]->load(postPrograms[4]);
-
-            uniforms[0][UNIFORM_WIDTH] = glGetUniformLocation(postPrograms[4], "width");
-            uniforms[0][UNIFORM_HEIGHT] = glGetUniformLocation(postPrograms[4], "height");
+            uniforms[0][UNIFORM_WIDTH] = glGetUniformLocation(postProgram, "width");
+            uniforms[0][UNIFORM_HEIGHT] = glGetUniformLocation(postProgram, "height");
         }
     }
 #  if HAVE_GLES2
@@ -819,8 +779,8 @@ static void drawPost(size_t index, const float pose[16], const std::vector<float
             glEnableVertexAttribArray(ATTRIBUTE_VERTEX);
             glEnableVertexAttribArray(ATTRIBUTE_NORMAL);
 #    ifdef DEBUG
-            if (!arglGLValidateProgram(postPrograms)) {
-                ARLOGe("drawPost(): Error: shader program %d validation failed.\n", postPrograms);
+            if (!arglGLValidateProgram(postProgram)) {
+                ARLOGe("drawPost(): Error: shader program %d validation failed.\n", postProgram);
                 return;
             }
 #    endif // DEBUG
@@ -841,8 +801,8 @@ static void drawPost(size_t index, const float pose[16], const std::vector<float
                 glEnableVertexAttribArray(ATTRIBUTE_NORMAL);
             }
     #ifdef DEBUG
-            if (!arglGLValidateProgram(postPrograms)) {
-                ARLOGe("drawPost() Error: shader program %d validation failed.\n", postPrograms);
+            if (!arglGLValidateProgram(postProgram)) {
+                ARLOGe("drawPost() Error: shader program %d validation failed.\n", postProgram);
                 return;
             }
     #endif
@@ -850,6 +810,7 @@ static void drawPost(size_t index, const float pose[16], const std::vector<float
 #  endif
 
     const cv::Mat& depth = index == 0 ? leftDepth : rightDepth;
+#  if !BASELINE // This boolean determines whether to run anchor repositioning and density redistribution
     voronoi[index]->updateDepth(depth, modelDepth, pose, gProjection, width, height, contentWidth, contentHeight);
 
     glBindFramebuffer(GL_FRAMEBUFFER, gFBOs[1]);
@@ -857,15 +818,16 @@ static void drawPost(size_t index, const float pose[16], const std::vector<float
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     voronoi[index]->drawPattern(true);
 
-#  if HAVE_GL3
+#   if HAVE_GL3
     glBindVertexArray(gQuadVAO);
-    glUseProgram(postPrograms[4]);
-#  endif
+    glUseProgram(postProgram);
+#   endif
 
     glUniform1f(uniforms[0][UNIFORM_WIDTH], float(contentWidth));
     glUniform1f(uniforms[0][UNIFORM_HEIGHT], float(contentHeight));
     glBindTexture(GL_TEXTURE_2D, gFBOTextures[1]);
-    voronoi[index]->updateDensity(postPrograms[4], depth, modelDepth, pose, width, height, contentWidth, contentHeight);
+    voronoi[index]->updateDensity(postProgram, depth, modelDepth, pose, width, height, contentWidth, contentHeight);
+#  endif
 
     glViewport(gViewport[0] + gViewport[2] / 2 * index, gViewport[1], gViewport[2] / 2, gViewport[3]);
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -873,13 +835,15 @@ static void drawPost(size_t index, const float pose[16], const std::vector<float
 
     voronoi[index]->drawPattern(false);
 
-# if true
+# if false // This boolean determines whether to run the quantitative measurement or not
     std::vector<unsigned char> pixels(contentWidth * contentHeight * 4);
     glReadPixels(gViewport[0] + gViewport[2] / 2 * index, gViewport[1], contentWidth, contentHeight, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
 
+    // Compare pixels with the same world positions from last frame
     float viewInv[16];
     invertMatrix(pose, viewInv);
     if (!worldPositions[index].empty()) {
+        // Change 0 to 1 for visual coherence
         const size_t newIndex = (index + 1) % 2;
         std::vector<float> differencesRaw;
         differencesRaw.reserve(contentWidth * contentHeight);
@@ -946,24 +910,27 @@ static void drawPost(size_t index, const float pose[16], const std::vector<float
             }
         }
 
+#  if true // Constant normalization factor for visualization
         float normFactor = 0.1f;
-        // const float mean = count / float(contentWidth * contentHeight);
-        // float sd = 0.0f;
-        // for (float x : differencesRaw) {
-        //     if (x == -1.0f) {
-        //         continue;
-        //     }
-        //     sd += (x - mean) * (x - mean);
-        // }
+#  else // Non-constant normalization factor based on maximum of 3 standard deviations from the mean
+        const float mean = count / float(contentWidth * contentHeight);
+        float sd = 0.0f;
+        for (float x : differencesRaw) {
+            if (x == -1.0f) {
+                continue;
+            }
+            sd += (x - mean) * (x - mean);
+        }
 
-        // sd /= float(contentWidth * contentHeight - 1);
+        sd /= float(contentWidth * contentHeight - 1);
 
-        // for (float x : differencesRaw) {
-        //     if (x == -1.0f || x - mean > 3 * sd) {
-        //         continue;
-        //     }
-        //     normFactor = std::max(normFactor, x);
-        // }
+        for (float x : differencesRaw) {
+            if (x == -1.0f || x - mean > 3 * sd) {
+                continue;
+            }
+            normFactor = std::max(normFactor, x);
+        }
+#  endif
 
         printf("Index %d: %f\n", index, count);
         std::vector<cv::Vec3b> differences;
@@ -979,14 +946,16 @@ static void drawPost(size_t index, const float pose[16], const std::vector<float
             }
         }
 
-        cv::Mat diffImage(contentHeight, contentWidth, CV_8UC3, differences.data());
-        if (index == 0) {
-            cv::imwrite("differenceL.jpg", diffImage);
-        } else {
-            cv::imwrite("differenceR.jpg", diffImage);
-        }
+        // Save pixel difference images
+        // cv::Mat diffImage(contentHeight, contentWidth, CV_8UC3, differences.data());
+        // if (index == 0) {
+        //     cv::imwrite("differenceL.jpg", diffImage);
+        // } else {
+        //     cv::imwrite("differenceR.jpg", diffImage);
+        // }
     }
 
+    // Save pixel world positions for current frame
     worldPositions[index].resize(contentWidth * contentHeight);
     colors[index].resize(contentWidth * contentHeight);
     for (size_t i = 0; i < contentHeight; i++) {
@@ -1022,123 +991,7 @@ static void drawPost(size_t index, const float pose[16], const std::vector<float
     }
 # endif
 
-    // cv::Mat diff(contentHeight, contentWidth, CV_U8C3);
-
-    // glViewport(gViewport[0] + gViewport[2] / 2 * index, gViewport[1], gViewport[2] / 2, gViewport[3]);
-    // glUseProgram(postPrograms[4]);
-    // glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    // glDisable(GL_DEPTH_TEST);
-
-    // glActiveTexture(GL_TEXTURE0);
-    // glBindTexture(GL_TEXTURE_2D, gFBOTextures[0]);
-    // glActiveTexture(GL_TEXTURE1);
-    // glBindTexture(GL_TEXTURE_2D, gFBOTextures[1]);
-
-    // if (highlight && position[0] == 0.0f) {
-    //     const int x = mousex;
-    //     const int y = mousey;
-    //     // printf("%d, %d\n", x, y);
-    //     // const float d = depth.at<float>(y, x);
-    //     cv::vec<float, 3> v = leftdepth.at<cv::vec<float, 3>>(y, x);
-    //     // printf("%f, %f, %f\n", v[0], v[1], v[2]);
-
-    //     // const float projpos[4] = { float(x) / 1024.0f * 2.0f - 1.0f, float(y) / 1024.0f * -2.0f + 1.0f, 1.0f, 1.0f };
-
-    //     // float projinv[16];
-    //     // invertmatrix(gprojection, projinv);
-    //     // float viewpos[4];
-    //     // transformvector(projpos, projinv, viewpos);
-    //     // for (int i = 0; i < 4; i++) {
-    //     //     viewpos[i] /= viewpos[3];
-    //     // }
-
-    //     float p[4] = {
-    //         v[0],
-    //         v[1],
-    //         v[2],
-    //         1.0f
-    //     };
-
-    //     float viewinv[16];
-    //     invertmatrix(pose, viewinv);
-    //     float worldpos[4];
-    //     transformvector(p, viewinv, worldpos);
-
-    //     for (int i = 0; i < 3; i++) {
-    //         position[i] = worldpos[i];
-    //     }
-
-    //     // printf("%f, %f, %f, %f\n", projpos[0], projpos[1], projpos[2], projpos[3]);
-    //     // printf("%f, %f, %f, %f\n", viewpos[0], viewpos[1], viewpos[2], viewpos[3]);
-
-    //     printf("%f, %f, %f, %f\n", p[0], p[1], p[2], p[3]);
-    //     printf("%f, %f, %f, %f\n", worldpos[0], worldpos[1], worldpos[2], worldpos[3]);
-    // }
-
-    // if (index == 0) {
-    //     float worldPos[4];
-    //     for (int i = 0; i < 3; i++) {
-    //         worldPos[i] = position[i];
-    //     }
-    //     float temp1[4];
-    //     transformVector(worldPos, pose, temp1);
-    //     float temp2[4];
-    //     transformVector(temp1, gProjection, temp2);
-
-    //     for (int i = 0; i < 4; i++) {
-    //         temp2[i] /= temp2[3];
-    //     }
-
-    //     printf("%f, %f, %f, %f\n", temp1[0], temp1[1], temp1[2], temp1[3]);
-    //     printf("%f, %f, %f, %f\n", temp2[0], temp2[1], temp2[2], temp2[3]);
-    // }
-
-    // voronoi[index]->prepare(postPrograms[4], position, pose, gProjection, highlight);
-
-    // glDrawArrays(GL_TRIANGLES, 0, 6);
-
-    // // RGB to LAB
-    // glUseProgram(postPrograms[0]);
-    // glBindFramebuffer(GL_FRAMEBUFFER, gFBOs[1]);
-    // glClear(GL_COLOR_BUFFER_BIT);
-    // glBindTexture(GL_TEXTURE_2D, gFBOTextures[0]);
-
-    // glDrawArrays(GL_TRIANGLES, 0, 6);
-
-    // if (stylize) {
-    //     // Bilinear filter
-    //     glUseProgram(postPrograms[1]);
-    //     glBindFramebuffer(GL_FRAMEBUFFER, gFBOs[0]);
-    //     glClear(GL_COLOR_BUFFER_BIT);
-    //     glBindTexture(GL_TEXTURE_2D, gFBOTextures[1]);
-
-    //     glUniform1f(uniforms[UNIFORM_WIDTH], float(gViewport[2] / 2));
-    //     glUniform1f(uniforms[UNIFORM_HEIGHT], float(gViewport[3]));
-
-    //     glDrawArrays(GL_TRIANGLES, 0, 6);
-
-    //     // Edge detection
-    //     glUseProgram(postPrograms[2]);
-    //     glBindFramebuffer(GL_FRAMEBUFFER, gFBOs[1]);
-    //     glClear(GL_COLOR_BUFFER_BIT);
-    //     glBindTexture(GL_TEXTURE_2D, gFBOTextures[0]);
-
-    //     glUniform1f(uniforms[UNIFORM_WIDTH], float(gViewport[2] / 2));
-    //     glUniform1f(uniforms[UNIFORM_HEIGHT], float(gViewport[3]));
-
-    //     glDrawArrays(GL_TRIANGLES, 0, 6);
-    // }
-
-    // // LAB to RGB
-    // glViewport(gViewport[0] + gViewport[2] / 2 * index, gViewport[1], gViewport[2] / 2, gViewport[3]);
-
-    // glUseProgram(postPrograms[3]);
-    // glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    // glBindTexture(GL_TEXTURE_2D, gFBOTextures[1]);
-
-    // glDrawArrays(GL_TRIANGLES, 0, 6);
-
-//     glBindTexture(GL_TEXTURE_2D, 0);
+    glBindTexture(GL_TEXTURE_2D, 0);
 #endif
 #if HAVE_GL3
     glBindVertexArray(0);

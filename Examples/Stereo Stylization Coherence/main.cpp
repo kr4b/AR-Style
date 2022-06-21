@@ -75,11 +75,6 @@
 const char *vconfl = "-module=WinMF -format=BGRA";
 const char *vconfr = "-module=WinMF -format=BGRA";
 #else
-// const char *vconf = "-module=GStreamer filesrc location=/home/max/test.mp4 !"
-//                     "decodebin ! videoconvert ! video/x-raw ! identity "
-//                     "name=artoolkit ! fakesink";
-// const char *vconf =
-//     "-module=V4L2 -width=1280 -height=720 -dev=/dev/video4 -format=BGRA";
 const char *vconfl = NULL;
 const char *vconfr = NULL;
 #endif
@@ -103,13 +98,12 @@ struct marker {
   const char *name;
   float height;
 };
+
+// Define marker height in terms of size in the real scene
+// The same unit used here ought to be used for the baseline distance of the reprojection matrix
 static const struct marker markers[] = { //{"hiro.patt", 80.0},
     {"kanji.patt", 0.1}};
 static const int markerCount = (sizeof(markers) / sizeof(markers[0]));
-
-//
-//
-//
 
 static void processCommandLineOptions(int argc, char *argv[]);
 static void usage(char *com);
@@ -250,45 +244,9 @@ int main(int argc, char *argv[]) {
   ARLOGd("vconfl is '%s'.\n", vconfl);
   ARLOGd("vconfr is '%s'.\n", vconfr);
 #endif
-  // Stereo projection matrix
-  // const double stereoParametersRaw[12] = {
-  //   0.99961674, -0.02704036, -0.00593392,  0.36404321,
-  //   -0.01923079, -0.52406532, -0.85146105, -0.03396377,
-  //   0.01991405,  0.85124886, -0.52438444,  0.34131616
-  // };
-  // const double stereoParametersRaw[12] = {
-  //   1.0, 0.0, 0.0, 0.095,
-  //   0.0, 1.0, 0.0, 0.095,
-  //   0.0, 0.0, 1.0, 0.095
-  // };
-  // char stereoParameters[sizeof(stereoParametersRaw)];
-  // for (int i = 0; i < 12; i++) {
-  //   for (int j = 0; j < sizeof(double); j++) {
-  //     stereoParameters[i * sizeof(double) + sizeof(double) - j - 1] = ((char*) &stereoParametersRaw[i])[j];
-  //   }
-  // }
-
-  // Start tracking.
-  // arController->startRunningStereo(vconfl, cpara, NULL, 0, vconfr, cpara, NULL, 0, NULL, (const char*) stereoParameters, sizeof(stereoParameters));
-  // const double cparaRaw[12] = {
-  //    1431.8732, 397.3820, -276.9242, 692.5042,
-  //   -17.1545, -309.4979, -1479.4517, 126.4498,
-  //    0.0199, 0.8512, -0.5244, 0.3413
-  //    0.9996, -0.0270, -0.0059, 0.3640,
-  //   -0.0192, -0.5241, -0.8515, -0.0340,
-  //    0.0199, 0.8512, -0.5244, 0.3413
-  // };
-  // char cpara2[sizeof(cparaRaw)];
-  // for (int i = 0; i < 12; i++) {
-  //   for (int j = 0; j < sizeof(double); j++) {
-  //     cpara2[i * sizeof(double) + sizeof(double) - j - 1] = ((char*) &cparaRaw[i])[j];
-  //   }
-  // }
 
   arControllers[0]->startRunning(vconfl, cpara, NULL, 0);
   arControllers[1]->startRunning(vconfr, cpara, NULL, 0);
-  // arControllers[0]->startRunning(vconfl, NULL, cpara2, sizeof(cpara2));
-  // arControllers[1]->startRunning(vconfr, NULL, cpara2, sizeof(cpara2));
 
   drawInit();
 
@@ -316,19 +274,9 @@ int main(int argc, char *argv[]) {
         // ARLOGd("Window event %d.\n", ev.window.event);
         if (ev.window.event == SDL_WINDOWEVENT_RESIZED &&
             ev.window.windowID == SDL_GetWindowID(gSDLWindow)) {
-          // int32_t w = ev.window.data1;
-          // int32_t h = ev.window.data2;
           int w, h;
           SDL_GL_GetDrawableSize(gSDLWindow, &w, &h);
           reshape(w, h);
-        }
-      } else if (ev.type == SDL_MOUSEMOTION) {
-        const int x = int(float(ev.motion.x - viewport[0]) / float(contentWidth / 2.0f) * float(width));
-        const int y = int(float(ev.motion.y - viewport[1]) / float(contentHeight) * float(height));
-        if (x >= 0 && y >= 0 && x < width && y < height) {
-          if (drawMouseMove(x, y)) {
-            drawFull(width, height, contentWidth, contentHeight);
-          }
         }
       } else if (ev.type == SDL_KEYDOWN) {
         if (ev.key.keysym.sym == SDLK_d) {
@@ -339,12 +287,6 @@ int main(int argc, char *argv[]) {
         }
         if (ev.key.keysym.sym == SDLK_v) {
           drawToggleModels();
-        }
-        if (ev.key.keysym.sym == SDLK_h) {
-          drawToggleHighlight();
-        }
-        if (ev.key.keysym.sym == SDLK_TAB) {
-          drawToggleStyle();
         }
         if (ev.key.keysym.sym == SDLK_SPACE) {
           paused = !paused;
@@ -421,7 +363,7 @@ int main(int argc, char *argv[]) {
 
         for (int i = 0; i <= 1; i++) {
           for (int j = 0; j < markerCount; j++) {
-            markerModelIDs[i][j] = drawLoadModel(NULL);
+            markerModelIDs[i][j] = drawLoadModel();
           }
         }
         contextWasUpdated = false;
@@ -441,7 +383,6 @@ int main(int argc, char *argv[]) {
           ARTrackable *marker = arControllers[i]->findTrackable(markerIDs[i][j]);
           float view[16];
           if (marker->visible) {
-            // arUtilPrintMtx16(marker->transformationMatrix);
             for (int k = 0; k < 16; k++) {
               view[k] = (float)marker->transformationMatrix[k];
             }
@@ -470,6 +411,7 @@ int main(int argc, char *argv[]) {
   return 0;
 }
 
+// Draw frames, virtual models and stylized results
 static void drawFull(int width, int height, int contentWidth, int contentHeight) {
   SDL_GL_MakeCurrent(gSDLWindow, gSDLContext);
   glClearColor(0.0, 0.0, 0.0, 0.0);

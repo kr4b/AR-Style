@@ -62,6 +62,7 @@ private:
     static constexpr float ALPHA = 0.01f;
     static constexpr float BETA = 0.9f;
 
+    // Load programs for rendering Voronoi diagram
     void loadPrograms(ARG_API drawAPI) {
         const char vertShaderStringGLES2[] =
             "attribute vec3 vPosition;\n"
@@ -107,11 +108,7 @@ private:
                     "FragColor = vec4(vec3(1.0), (1.0 - gl_FragCoord.z) * 0.5);\n"
                 "} else {\n"
                     "FragColor = vec4(color, 1.0);\n"
-                    // "if (gl_FragCoord.z < 0.52) {\n"
-                    //     "FragColor = vec4(vec3(0.0), 1.0);\n"
-                    // "} else {\n"
-                    //     "FragColor = vec4(float(int((color.x + 0.1) * 57190) % 255) / 255.0, float(int((color.y + 0.1) * 751009) % 255) / 255.0, float(int((color.z + 0.1) * 83401) % 255) / 255.0, 1.0);\n"
-                    // "}\n"
+                //     "FragColor = vec4(float(int((color.x + 0.1) * 57190) % 255) / 255.0, float(int((color.y + 0.1) * 751009) % 255) / 255.0, float(int((color.z + 0.1) * 83401) % 255) / 255.0, 1.0);\n"
                 "}\n"
             "}\n";
 
@@ -125,6 +122,7 @@ private:
         uniforms[1] = glGetUniformLocation(program, "density");
     }
 
+    // Load OpenGL and buffers
     void loadGL(ARG_API drawAPI) {
         const float scale = 3.0f / float(std::max(m, n));
         mtxLoadIdentityf(transform);
@@ -179,6 +177,7 @@ private:
 #endif
     }
 
+    // Get model view space depth at screen position
     cv::Vec3f getModelDepth(const std::vector<float>& modelDepth, float x, float y, int contentWidth, int contentHeight) {
         const size_t modelIndex = (int((1.0f - y) * float(contentHeight)) * contentWidth + int(x * float(contentHeight))) * 4;
         if (modelIndex > modelDepth.size()) {
@@ -192,6 +191,7 @@ private:
         return v;
     }
 
+    // Get world position at screen position, either by converting model view space or estimated stereo view space to world position
     void getWorldPosition(float x, float y, float worldPos[4], const cv::Mat& depth, const std::vector<float> &modelDepth, int width, int height, int contentWidth, int contentHeight, const float viewInv[16]) {
         cv::Vec3f v = getModelDepth(modelDepth, x, y, contentWidth, contentHeight);
         if (v[0] == 0.0f && v[1] == 0.0f && v[2] == 0.0f) {
@@ -208,8 +208,8 @@ private:
 
 public:
     const size_t m, n;
-    // std::vector<std::pair<float, float>> centers;
 
+    // Initialization step of Voronoi diagram of reference frame
     Voronoi(ARG_API drawAPI, size_t m, size_t n, int width, int height) : m(m), n(n), other(NULL) {
         // centers.resize(m * n);
         offsets.resize(m * n * 2);
@@ -231,18 +231,19 @@ public:
         glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(float) * offsets.size(), offsets.data());
     }
 
+        // Initialization step of Voronoi diagram from reference frame
     Voronoi(ARG_API drawAPI, const Voronoi* other) : m(other->m), n(other->n), other(other) {
         offsets.resize(other->offsets.size());
 
         loadGL(drawAPI);
     }
 
+    // Update world positions based on estimated view space and model view space
     void updateDepth(const cv::Mat& depth, const std::vector<float> &modelDepth, const float view[16], const float projection[16], int width, int height, int contentWidth, int contentHeight) {
         float viewInv[16];
         invertMatrix(view, viewInv);
-        // float projInv[16];
-        // invertMatrix(projection, projInv);
 
+        // Create initial world positions
         if (worldPositions.empty()) {
             if (other) {
                 worldPositions = other->worldPositions;
@@ -263,6 +264,7 @@ public:
             }
         }
 
+        // Remap world positions to new image space positions
         std::vector<float> newOffsets, newWorldPositions;
         newOffsets.reserve(m * n * 2);
         newWorldPositions.reserve(m * n * 3);
@@ -289,7 +291,7 @@ public:
 
             const float x = (imagePos[0] + 1.0f) / 2.0f;
             const float y = 1.0f - (imagePos[1] + 1.0f) / 2.0f;
-            if (x < 0.0f || y < 0.0f || x >= 1.0f || y >= 1.0f) {
+            if (isnan(x) || isnan(y) || isinf(x) || isinf(y) || x < 0.0f || y < 0.0f || x >= 1.0f || y >= 1.0f) {
                 continue;
             }
 
@@ -297,7 +299,7 @@ public:
             if (v[0] == 0.0f && v[1] == 0.0f && v[2] == 0.0f) {
                 v = depth.at<cv::Vec3f>(int(y * float(height)), int(x * float(width)));
             }
-            // TODO: Determine required accuracy for depth comparison
+
             if (cv::norm(v, cv::Vec3f(viewPos), cv::NORM_L2) <= EPSILON) {
                 newOffsets.push_back(x);
                 newOffsets.push_back(1.0f - y);
@@ -314,6 +316,7 @@ public:
         glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(float) * offsets.size(), offsets.data());
     }
 
+    // Update anchor point density based on a specialized rendering of the Voronoi diagram
     void updateDensity(GLuint program, const cv::Mat& depth, const std::vector<float> &modelDepth, const float view[16], int width, int height, int contentWidth, int contentHeight) {
         float viewInv[16];
         invertMatrix(view, viewInv);
@@ -337,6 +340,7 @@ public:
                 if (d > ALPHA && d < BETA) {
                     continue;
                 }
+
                 if (d >= BETA) {
                     for (int k = offsets.size() - 2; k >= 0; k -= 2) {
                         const float x = offsets[k + 0];
@@ -346,6 +350,7 @@ public:
                         }
                     }
                 }
+
                 const float x = (j + float(rand()) / float(RAND_MAX)) / float(m);
                 const float y = (i + float(rand()) / float(RAND_MAX)) / float(n);
                 offsets.push_back(x);
@@ -362,6 +367,7 @@ public:
         glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(float) * offsets.size(), offsets.data());
     }
 
+    // Draw Voronoi pattern, with or without specialized density rendering
     void drawPattern(bool density) {
         glUseProgram(program);
         glUniformMatrix4fv(uniforms[0], 1, GL_FALSE, transform);
@@ -387,20 +393,4 @@ public:
         glBindVertexArray(0);
 #endif
     }
-
-    // void load(GLuint program) {
-    //     glUseProgram(program);
-    //     glUniform1i(glGetUniformLocation(program, "frame"), 0);
-    //     glUniform1i(glGetUniformLocation(program, "pattern"), 1);
-    //     glUniform1i(glGetUniformLocation(program, "centers"), 2);
-    // }
-
-    // void prepare(GLuint program, const float position[3], const float view[16], const float projection[16], bool highlight) {
-    //     glActiveTexture(GL_TEXTURE2);
-    //     glBindTexture(GL_TEXTURE_1D, texture);
-    //     glUniform3fv(glGetUniformLocation(program, "position"), 1, position);
-    //     glUniform1i(glGetUniformLocation(program, "highlight"), highlight);
-    //     glUniformMatrix4fv(glGetUniformLocation(program, "view"), 1, GL_FALSE, view);
-    //     glUniformMatrix4fv(glGetUniformLocation(program, "projection"), 1, GL_FALSE, projection);
-    // }
 };
